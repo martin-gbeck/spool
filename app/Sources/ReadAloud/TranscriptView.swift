@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The whole reading that is playing, chunk by chunk, with the chunk being
 /// spoken highlighted and kept in view. OpenAI's speech API returns no word
-/// timings, so the highlight follows chunks, not words. Clicking a chunk
-/// plays from there.
+/// timings, so the highlight follows chunks, not words. Double-clicking a
+/// chunk plays from there. No text selection, since selection takes the double
+/// click for itself; Copy is in the right-click menu.
 struct TranscriptView: View {
     @Environment(PlayerModel.self) private var model
 
@@ -51,7 +52,6 @@ struct TranscriptView: View {
             .font(.body)
             .lineSpacing(4)
             .foregroundStyle(isCurrent ? .primary : .secondary)
-            .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
             .background(
@@ -60,6 +60,13 @@ struct TranscriptView: View {
             )
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { model.jump(to: chunk) }
+            .contextMenu {
+                Button("Play from Here") { model.jump(to: chunk) }
+                Button("Copy Text") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(chunk.text, forType: .string)
+                }
+            }
             .help("Double-click to play from here")
     }
 }

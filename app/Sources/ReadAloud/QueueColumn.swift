@@ -38,9 +38,25 @@ struct QueueColumn: View {
                 Text(kind == .upNext ? "Nothing queued" : "Nothing played yet")
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .dropDestination(for: String.self) { items, _ in
+                        guard kind == .upNext else { return false }
+                        let ids = items.compactMap(DraggedChunk.id)
+                        ids.forEach { model.move($0, before: nil) }
+                        return !ids.isEmpty
+                    }
             } else {
-                List(entries) { entry in
-                    QueueRow(entry: entry, showTitle: showsTitle(entry))
+                List {
+                    ForEach(entries) { entry in
+                        QueueRow(entry: entry, showTitle: showsTitle(entry))
+                            .itemProvider { entry.id == model.current?.id ? nil : DraggedChunk.provider(entry.id) }
+                    }
+                    .onInsert(of: [.plainText]) { index, providers in
+                        guard kind == .upNext else { return }
+                        // The gap he dropped into: before the row below it, or the end.
+                        let before = index < entries.count ? entries[index].id : nil
+                        DraggedChunk.load(providers) { id in model.move(id, before: before) }
+                    }
                 }
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
@@ -53,6 +69,29 @@ struct QueueColumn: View {
     private func showsTitle(_ entry: Entry) -> Bool {
         guard let index = entries.firstIndex(of: entry), index > 0 else { return true }
         return entries[index - 1].reading != entry.reading
+    }
+}
+
+/// A chunk being dragged between or within the lists travels as text carrying
+/// its id. Dropping that text anywhere else pastes the marker, which is harmless.
+enum DraggedChunk {
+    static let prefix = "read-aloud-chunk:"
+
+    static func provider(_ id: UInt64) -> NSItemProvider {
+        NSItemProvider(object: "\(prefix)\(id)" as NSString)
+    }
+
+    static func id(_ text: String) -> UInt64? {
+        text.hasPrefix(prefix) ? UInt64(text.dropFirst(prefix.count)) : nil
+    }
+
+    static func load(_ providers: [NSItemProvider], then handle: @escaping @MainActor (UInt64) -> Void) {
+        for provider in providers {
+            _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let text = object as? String, let id = id(text) else { return }
+                Task { @MainActor in handle(id) }
+            }
+        }
     }
 }
 

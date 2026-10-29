@@ -99,13 +99,14 @@ final class PlayerModel {
         }
     }
 
-    /// Queues text behind whatever is playing, chunked as the hotkey's is,
-    /// and saved to the library the way tts.py saves Claude's readings.
-    func speak(_ text: String) {
-        var command: [String: Any] = ["cmd": "speak", "text": text]
-        if let folder = try? Library.newReading(for: text) {
-            command["save_dir"] = folder.path
-        }
+    /// Queues text behind whatever is playing, chunked as the hotkey's is.
+    /// The engine saves it to the library like every other reading.
+    func speak(_ text: String) { send(["cmd": "speak", "text": text]) }
+
+    /// Puts `id` just before `before`, or at the end of the queue.
+    func move(_ id: UInt64, before: UInt64?) {
+        var command: [String: Any] = ["cmd": "move", "id": id]
+        if let before { command["before"] = before }
         send(command)
     }
 

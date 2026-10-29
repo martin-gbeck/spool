@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::audio::{self, Output, lock};
 use crate::config::{self, Config};
-use crate::deck::{Deck, EntryState};
+use crate::deck::{Audio, Deck, EntryState, Saved};
 use crate::{chunking, tts};
 
 /// How long the output may stop pulling audio while it should be playing
@@ -23,6 +23,8 @@ const MOVING_WITHIN: Duration = Duration::from_secs(1);
 const WATCH_EVERY: Duration = Duration::from_millis(250);
 /// Every this many watchdog ticks, check whether the default output changed.
 const DEVICE_CHECK_TICKS: u32 = 4;
+/// Every this many ticks the position is saved even when the list did not change.
+const SAVE_POSITION_TICKS: u32 = 8;
 
 /// What the player is doing right now. Flattened into every IPC reply, and
 /// polled a few times a second by the app.
@@ -107,6 +109,53 @@ fn reading_title(audio: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
+/// The queue as last saved, beside the config.
+fn queue_path() -> PathBuf {
+    config::config_path().with_file_name("queue.json")
+}
+
+fn load_queue() -> Option<Saved> {
+    let raw = std::fs::read(queue_path()).ok()?;
+    match serde_json::from_slice(&raw) {
+        Ok(saved) => Some(saved),
+        Err(e) => {
+            eprintln!("could not read the saved queue, starting empty: {e}");
+            None
+        }
+    }
+}
+
+/// A library folder for a reading that came without one (the hotkey, the
+/// app's paste field), laid out as tts.py lays out Claude's: a dated folder
+/// with transcript.md, the chunks' mp3 and txt added as they arrive.
+fn new_reading(text: &str, title: Option<&str>) -> Result<PathBuf, Error> {
+    let heading = match title.map(str::trim) {
+        Some(t) if !t.is_empty() => t.to_string(),
+        _ => text.split_whitespace().take(8).collect::<Vec<_>>().join(" "),
+    };
+    let words: Vec<String> = heading
+        .to_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .take(8)
+        .map(String::from)
+        .collect();
+    let slug = if words.is_empty() { "reading".to_string() } else { words.join("-") };
+    let stamp = chrono::Local::now().format("%Y-%m-%d-%H%M");
+
+    let library = config::config_path().with_file_name("library");
+    let mut dir = library.join(format!("{stamp}-{slug}"));
+    // Two readings in the same minute with the same opening words get their own folders.
+    let mut n = 2;
+    while dir.exists() {
+        dir = library.join(format!("{stamp}-{slug}-{n}"));
+        n += 1;
+    }
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("transcript.md"), format!("# {heading}\n\n{text}\n"))?;
+    Ok(dir)
+}
+
 struct Watch {
     /// None only for the moment between dropping a dead output and opening its replacement.
     output: Option<Output>,
@@ -145,7 +194,10 @@ impl Controls {
     /// Opens the default output device and starts the watchdog that decodes
     /// audio near the cursor and reopens the output when playback freezes.
     pub fn new(config: Config) -> Result<Self, Error> {
-        let deck = Arc::new(Mutex::new(Deck::new(config.speed, config.volume)));
+        let deck = Arc::new(Mutex::new(match load_queue() {
+            Some(saved) => Deck::restore(saved, config.speed, config.volume),
+            None => Deck::new(config.speed, config.volume),
+        }));
         let output = Output::open(deck.clone())?;
 
         let watch = Arc::new(Mutex::new(Watch {
@@ -165,11 +217,20 @@ impl Controls {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(WATCH_EVERY);
             let mut ticks: u32 = 0;
+            let mut saved_revision = None;
             loop {
                 interval.tick().await;
                 ticks = ticks.wrapping_add(1);
                 ticking.prepare();
                 ticking.check_output(ticks.is_multiple_of(DEVICE_CHECK_TICKS));
+
+                let revision = lock(&ticking.deck).revision();
+                if saved_revision != Some(revision) || ticks.is_multiple_of(SAVE_POSITION_TICKS) {
+                    match ticking.save_queue() {
+                        Ok(()) => saved_revision = Some(revision),
+                        Err(e) => eprintln!("could not save the queue: {e}"),
+                    }
+                }
             }
         });
 
@@ -184,8 +245,8 @@ impl Controls {
     /// thread never waits on an mp3 decoder, and frees the rest.
     fn prepare(&self) {
         let needed = lock(&self.deck).needs_pcm();
-        for (id, bytes) in needed {
-            let pcm = match audio::decode(bytes) {
+        for (id, source) in needed {
+            let pcm = match audio::decode(source) {
                 Ok(pcm) => Some(pcm),
                 Err(e) => {
                     eprintln!("could not decode chunk {id}: {e}");
@@ -256,9 +317,15 @@ impl Controls {
         let chunks: Vec<String> = chunking::chunk_text(text)?.into_iter().map(String::from).collect();
         let count = chunks.len();
 
-        if let Some(dir) = &save_dir {
-            std::fs::create_dir_all(dir)?;
-        }
+        // Every reading is saved, the hotkey's too, so the queue can come back
+        // after a restart and anything can be replayed without paying again.
+        let save_dir = match save_dir {
+            Some(dir) => {
+                std::fs::create_dir_all(&dir)?;
+                dir
+            }
+            None => new_reading(text, title.as_deref())?,
+        };
 
         let ids = {
             let mut deck = lock(&self.deck);
@@ -270,7 +337,7 @@ impl Controls {
         for (index, (id, text)) in ids.into_iter().zip(chunks).enumerate() {
             let config = config.clone();
             let request = request.clone();
-            let save_to = save_dir.as_ref().map(|dir| dir.join(format!("{:03}", index + 1)));
+            let stem = save_dir.join(format!("{:03}", index + 1));
             let deck = self.deck.clone();
 
             tokio::spawn(async move {
@@ -280,16 +347,19 @@ impl Controls {
                 )
                 .await;
 
-                let bytes = match fetched {
+                let audio = match fetched {
+                    // Saved even if a Stop lands meanwhile: the audio is paid for either way.
                     Ok(Ok(bytes)) => {
-                        // Saved even if a Stop lands meanwhile: the audio is paid for either way.
-                        if let Some(stem) = save_to
-                            && let Err(e) = std::fs::write(stem.with_extension("mp3"), &bytes)
-                                .and_then(|()| std::fs::write(stem.with_extension("txt"), &text))
+                        let mp3 = stem.with_extension("mp3");
+                        match std::fs::write(&mp3, &bytes)
+                            .and_then(|()| std::fs::write(stem.with_extension("txt"), &text))
                         {
-                            eprintln!("could not save chunk {}: {e}", stem.display());
+                            Ok(()) => Some(Audio::File(mp3)),
+                            Err(e) => {
+                                eprintln!("could not save chunk {}: {e}", stem.display());
+                                Some(Audio::Bytes(Arc::from(bytes)))
+                            }
                         }
-                        Some(Arc::from(bytes))
                     }
                     Ok(Err(e)) => {
                         eprintln!("tts request failed: {e}");
@@ -300,7 +370,7 @@ impl Controls {
                         None
                     }
                 };
-                lock(&deck).fill(id, bytes);
+                lock(&deck).fill(id, audio);
             });
         }
 
@@ -323,18 +393,15 @@ impl Controls {
         };
 
         let count = ids.len();
+        let mut deck = lock(&self.deck);
         for (id, path) in ids.into_iter().zip(paths) {
-            let deck = self.deck.clone();
-            tokio::spawn(async move {
-                let bytes = match tokio::fs::read(&path).await {
-                    Ok(bytes) => Some(Arc::from(bytes)),
-                    Err(e) => {
-                        eprintln!("could not read {}: {e}", path.display());
-                        None
-                    }
-                };
-                lock(&deck).fill(id, bytes);
-            });
+            let audio = if path.is_file() {
+                Some(Audio::File(path))
+            } else {
+                eprintln!("no audio file at {}", path.display());
+                None
+            };
+            deck.fill(id, audio);
         }
         count
     }
@@ -391,6 +458,19 @@ impl Controls {
 
     pub fn remove(&self, id: u64) -> bool {
         self.moved(|deck| deck.remove(id))
+    }
+
+    pub fn move_entry(&self, id: u64, before: Option<u64>) -> bool {
+        lock(&self.deck).move_entry(id, before)
+    }
+
+    fn save_queue(&self) -> Result<(), Error> {
+        let saved = lock(&self.deck).snapshot();
+        let path = queue_path();
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec(&saved)?)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
     }
 
     pub fn clear_played(&self) {

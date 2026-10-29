@@ -51,6 +51,12 @@ pub enum Command {
     },
     Jump { id: u64 },
     Remove { id: u64 },
+    /// Puts `id` just before `before`, or at the end of the queue without it.
+    Move {
+        id: u64,
+        #[serde(default)]
+        before: Option<u64>,
+    },
     ClearPlayed,
     Stop,
     SetSpeed { speed: f32 },
@@ -274,6 +280,13 @@ fn apply(command: Command, controls: &Controls) -> Reply {
         }
         Command::Jump { id } => Reply::found(controls.jump(id), id, controls),
         Command::Remove { id } => Reply::found(controls.remove(id), id, controls),
+        Command::Move { id, before } => {
+            if controls.move_entry(id, before) {
+                Reply::ok(controls)
+            } else {
+                Reply::failed(format!("cannot move chunk {id} there"), controls)
+            }
+        }
         Command::ClearPlayed => {
             controls.clear_played();
             Reply::ok(controls)

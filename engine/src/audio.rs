@@ -15,7 +15,7 @@ use rodio::source::UniformSourceIterator;
 use rodio::{ChannelCount, Decoder, DeviceSinkBuilder, DeviceTrait, MixerDeviceSink, Player, SampleRate, Source};
 use signalsmith_stretch::Stretch;
 
-use crate::deck::{Deck, RATE};
+use crate::deck::{Audio, Deck, RATE};
 
 const CHANNELS: ChannelCount = NonZero::new(1).unwrap();
 const SAMPLE_RATE: SampleRate = NonZero::new(RATE).unwrap();
@@ -26,7 +26,11 @@ const BLOCK: usize = 480;
 const NORMAL_SPEED: f32 = 0.01;
 
 /// The mp3 as mono samples at `RATE`, whatever rate and channels it came in.
-pub fn decode(bytes: Arc<[u8]>) -> Result<Arc<[f32]>, Error> {
+pub fn decode(audio: Audio) -> Result<Arc<[f32]>, Error> {
+    let bytes: Arc<[u8]> = match audio {
+        Audio::Bytes(bytes) => bytes,
+        Audio::File(path) => std::fs::read(path)?.into(),
+    };
     let decoder = Decoder::try_from(Cursor::new(bytes))?;
     Ok(UniformSourceIterator::new(decoder, CHANNELS, SAMPLE_RATE).collect())
 }
@@ -188,7 +192,7 @@ mod tests {
         let tone: Vec<f32> = (0..RATE as usize * seconds)
             .map(|i| (i as f32 * 220.0 * std::f32::consts::TAU / RATE as f32).sin() * 0.5)
             .collect();
-        deck.fill(ids[0], Some(Arc::from(vec![0u8])));
+        deck.fill(ids[0], Some(Audio::Bytes(Arc::from(vec![0u8]))));
         deck.set_pcm(ids[0], Some(Arc::from(tone)));
         Arc::new(Mutex::new(deck))
     }

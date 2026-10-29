@@ -37,6 +37,12 @@ app's polling.
 
 ## Shape
 
+**The queue survives restarts** (2026-10-29, his ask). The engine writes it to
+`queue.json` beside the config whenever the list changes and every 2 seconds
+while playing, and restores it paused. That works because every reading is
+saved to the library now, the hotkey's and the paste field's too: the deck
+keeps file paths, not audio in memory.
+
 `deck.rs` is the queue: one list with a cursor, played before it, playing at
 it, up next after it. Restart, seek, previous, next, jump and remove are moves
 of that cursor, and all of it is unit tested with no audio device. `audio.rs`

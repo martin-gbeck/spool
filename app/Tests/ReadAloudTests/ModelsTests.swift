@@ -87,7 +87,8 @@ private func entry(_ id: UInt64, reading: UInt64 = 1, index: Int = 1) -> Entry {
     #expect(cut == "word word word word…")
 }
 
-@Test func slugMatchesThePythonLibraryNames() {
-    #expect(Library.slug("DBA3803: the Presentation primer!") == "dba3803-the-presentation-primer")
-    #expect(Library.slug("…") == "reading")
+
+@Test func draggedChunkIdsRoundTripAndIgnoreOtherText() {
+    #expect(DraggedChunk.id("read-aloud-chunk:42") == 42)
+    #expect(DraggedChunk.id("some pasted text") == nil)
 }

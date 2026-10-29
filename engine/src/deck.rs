@@ -6,16 +6,17 @@
 //!
 //! No audio device in here, so all of it is unit tested.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Every chunk is decoded to mono at this rate, whatever it arrived as.
 pub const RATE: u32 = 24_000;
 /// Previous restarts the chunk when it is further in than this, as music players do.
 const RESTART_WITHIN: Duration = Duration::from_secs(3);
-/// Played entries kept for going back. Their mp3 bytes are about 1 MB a minute.
+/// Played entries kept for going back.
 const HISTORY_LIMIT: usize = 300;
 /// Entries around the cursor that keep their decoded audio: one back, two ahead.
 const KEEP_BEHIND: usize = 1;
@@ -32,6 +33,15 @@ pub enum EntryState {
     Failed,
 }
 
+/// Where a chunk's mp3 is. A file when it was saved to the library, which
+/// is nearly always, so the deck keeps paths and not megabytes; bytes only when
+/// saving failed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Audio {
+    Bytes(Arc<[u8]>),
+    File(PathBuf),
+}
+
 pub struct Entry {
     pub id: u64,
     /// Entries from the same speak share this, so the app can show them as one transcript.
@@ -40,8 +50,8 @@ pub struct Entry {
     /// 1-based position inside its reading.
     pub index: usize,
     pub text: String,
-    /// The mp3 as fetched. None while it is still loading.
-    pub bytes: Option<Arc<[u8]>>,
+    /// None while it is still loading.
+    pub audio: Option<Audio>,
     pub failed: bool,
     /// Decoded audio, kept only near the cursor.
     pub pcm: Option<Arc<[f32]>>,
@@ -51,7 +61,7 @@ impl Entry {
     pub fn state(&self) -> EntryState {
         if self.failed {
             EntryState::Failed
-        } else if self.bytes.is_some() {
+        } else if self.audio.is_some() {
             EntryState::Ready
         } else {
             EntryState::Loading
@@ -202,7 +212,7 @@ impl Deck {
                     title: title.clone(),
                     index: index + 1,
                     text,
-                    bytes: None,
+                    audio: None,
                     failed: false,
                     pcm: None,
                 });
@@ -220,14 +230,14 @@ impl Deck {
 
     /// Lands fetched audio, or marks the fetch failed. False when the entry
     /// was removed or stopped meanwhile, so the audio has nowhere to go.
-    pub fn fill(&mut self, id: u64, bytes: Option<Arc<[u8]>>) -> bool {
+    pub fn fill(&mut self, id: u64, audio: Option<Audio>) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
         };
 
         let entry = &mut self.entries[index];
-        match bytes {
-            Some(bytes) => entry.bytes = Some(bytes),
+        match audio {
+            Some(audio) => entry.audio = Some(audio),
             None => entry.failed = true,
         }
         self.changed();
@@ -235,7 +245,7 @@ impl Deck {
     }
 
     /// Entries near the cursor whose audio still needs decoding.
-    pub fn needs_pcm(&self) -> Vec<(u64, Arc<[u8]>)> {
+    pub fn needs_pcm(&self) -> Vec<(u64, Audio)> {
         let start = self.cursor.saturating_sub(KEEP_BEHIND);
         let end = (self.cursor + KEEP_AHEAD + 1).min(self.entries.len());
 
@@ -244,7 +254,7 @@ impl Deck {
             .unwrap_or_default()
             .iter()
             .filter(|e| e.pcm.is_none() && !e.failed)
-            .filter_map(|e| Some((e.id, e.bytes.clone()?)))
+            .filter_map(|e| Some((e.id, e.audio.clone()?)))
             .collect()
     }
 
@@ -407,11 +417,123 @@ impl Deck {
         self.changed();
     }
 
+    /// Moves `id` to just before `before`, or to the end of the queue when
+    /// `before` is None. The chunk playing cannot be moved. A played chunk
+    /// dropped among the upcoming ones is simply up next again; dropped on an
+    /// idle deck it becomes the one playing.
+    pub fn move_entry(&mut self, id: u64, before: Option<u64>) -> bool {
+        let Some(from) = self.index_of(id) else {
+            return false;
+        };
+        if from == self.cursor || before == Some(id) {
+            return false;
+        }
+        if let Some(target) = before
+            && self.index_of(target).is_none()
+        {
+            return false;
+        }
+
+        let entry = self.entries.remove(from);
+        if from < self.cursor {
+            self.cursor -= 1;
+        }
+
+        let to = before.and_then(|b| self.index_of(b)).unwrap_or(self.entries.len());
+        let has_current = self.cursor < self.entries.len();
+        self.entries.insert(to, entry);
+        if to < self.cursor || (to == self.cursor && has_current) {
+            self.cursor += 1;
+        }
+
+        self.changed();
+        true
+    }
+
+    /// What is worth keeping across a restart: the list, where the cursor is
+    /// and how far into the chunk.
+    pub fn snapshot(&self) -> Saved {
+        Saved {
+            entries: self
+                .entries
+                .iter()
+                .map(|e| SavedEntry {
+                    reading: e.reading,
+                    title: e.title.to_string(),
+                    index: e.index,
+                    text: e.text.clone(),
+                    path: match &e.audio {
+                        Some(Audio::File(path)) => Some(path.clone()),
+                        _ => None,
+                    },
+                    failed: e.failed,
+                })
+                .collect(),
+            cursor: self.cursor,
+            position: self.position().as_secs_f64(),
+        }
+    }
+
+    /// The deck as it was saved, paused so a restart does not start talking.
+    /// A chunk whose file is gone, or that was still loading, comes back failed.
+    pub fn restore(saved: Saved, speed: f32, volume: f32) -> Self {
+        let mut deck = Self::new(speed, volume);
+        let mut titles: Vec<(u64, Arc<str>)> = Vec::new();
+
+        for saved_entry in saved.entries {
+            let title = match titles.iter().find(|(r, _)| *r == saved_entry.reading) {
+                Some((_, title)) => title.clone(),
+                None => {
+                    let title: Arc<str> = saved_entry.title.into();
+                    titles.push((saved_entry.reading, title.clone()));
+                    title
+                }
+            };
+            let path = saved_entry.path.filter(|p| p.exists());
+
+            deck.entries.push(Entry {
+                id: deck.next_id,
+                reading: saved_entry.reading,
+                title,
+                index: saved_entry.index,
+                text: saved_entry.text,
+                failed: saved_entry.failed || path.is_none(),
+                audio: path.map(Audio::File),
+                pcm: None,
+            });
+            deck.next_id += 1;
+            deck.next_reading = deck.next_reading.max(saved_entry.reading + 1);
+        }
+
+        deck.cursor = saved.cursor.min(deck.entries.len());
+        deck.pos = duration_to_frames(Duration::from_secs_f64(saved.position.max(0.0)));
+        deck.paused = deck.cursor < deck.entries.len();
+        deck
+    }
+
     /// Steps back after the output died, so a dropout does not cost the middle of a sentence.
     pub fn rewind(&mut self, by: Duration) {
         self.pos = self.pos.saturating_sub(duration_to_frames(by));
         self.epoch += 1;
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Saved {
+    pub entries: Vec<SavedEntry>,
+    pub cursor: usize,
+    /// Seconds into the chunk at the cursor.
+    pub position: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SavedEntry {
+    pub reading: u64,
+    pub title: String,
+    pub index: usize,
+    pub text: String,
+    pub path: Option<PathBuf>,
+    pub failed: bool,
 }
 
 #[cfg(test)]
@@ -423,7 +545,7 @@ mod tests {
         let mut deck = Deck::new(1.0, 1.0);
         let ids = deck.add_reading("t", (1..=n).map(|i| format!("chunk {i}")).collect());
         for (i, id) in ids.iter().enumerate() {
-            deck.fill(*id, Some(Arc::from(vec![0u8; 4])));
+            deck.fill(*id, Some(Audio::Bytes(Arc::from(vec![0u8; 4]))));
             deck.set_pcm(*id, Some(Arc::from(vec![(i + 1) as f32; RATE as usize])));
         }
         (deck, ids)
@@ -453,7 +575,7 @@ mod tests {
     fn waits_for_an_entry_still_loading() {
         let mut deck = Deck::new(1.0, 1.0);
         let ids = deck.add_reading("", vec!["a".into(), "b".into()]);
-        deck.fill(ids[0], Some(Arc::from(vec![0u8])));
+        deck.fill(ids[0], Some(Audio::Bytes(Arc::from(vec![0u8]))));
         deck.set_pcm(ids[0], Some(Arc::from(vec![1.0; 100])));
 
         let mut out = vec![0.0; 300];
@@ -485,7 +607,7 @@ mod tests {
         let mut long = Deck::new(1.0, 1.0);
         let lid = long.add_reading("", vec!["a".into(), "b".into()]);
         for id in &lid {
-            long.fill(*id, Some(Arc::from(vec![0u8])));
+            long.fill(*id, Some(Audio::Bytes(Arc::from(vec![0u8]))));
             long.set_pcm(*id, Some(Arc::from(vec![0.0; RATE as usize * 10])));
         }
         long.next();
@@ -579,7 +701,7 @@ mod tests {
         let ids = deck.add_reading("", vec!["a".into()]);
         deck.stop();
         deck.clear_played();
-        assert!(!deck.fill(ids[0], Some(Arc::from(vec![0u8]))));
+        assert!(!deck.fill(ids[0], Some(Audio::Bytes(Arc::from(vec![0u8])))));
     }
 
     #[test]
@@ -618,5 +740,74 @@ mod tests {
         assert_eq!(deck.speed(), MAX_SPEED);
         deck.set_speed(0.1);
         assert_eq!(deck.speed(), MIN_SPEED);
+    }
+
+    fn order(deck: &Deck) -> Vec<u64> {
+        deck.entries().iter().map(|e| e.id).collect()
+    }
+
+    #[test]
+    fn move_reorders_up_next() {
+        let (mut deck, ids) = deck_with(4);
+        assert!(deck.move_entry(ids[3], Some(ids[1])));
+        assert_eq!(order(&deck), vec![ids[0], ids[3], ids[1], ids[2]]);
+        assert_eq!(current_id(&deck), Some(ids[0]));
+        assert!(deck.move_entry(ids[3], None));
+        assert_eq!(order(&deck), vec![ids[0], ids[1], ids[2], ids[3]]);
+    }
+
+    #[test]
+    fn a_played_chunk_dragged_into_up_next_is_queued_again() {
+        let (mut deck, ids) = deck_with(4);
+        deck.jump(ids[2]);
+        assert!(deck.move_entry(ids[0], Some(ids[3])));
+        assert_eq!(order(&deck), vec![ids[1], ids[2], ids[0], ids[3]]);
+        assert_eq!(current_id(&deck), Some(ids[2]));
+        assert_eq!(order(&deck)[deck.cursor() + 1..], [ids[0], ids[3]]);
+    }
+
+    #[test]
+    fn a_played_chunk_dropped_on_an_idle_deck_plays() {
+        let (mut deck, ids) = deck_with(2);
+        deck.next();
+        deck.next();
+        assert!(deck.move_entry(ids[0], None));
+        assert_eq!(current_id(&deck), Some(ids[0]));
+    }
+
+    #[test]
+    fn the_playing_chunk_does_not_move() {
+        let (mut deck, ids) = deck_with(3);
+        assert!(!deck.move_entry(ids[0], None));
+        assert!(!deck.move_entry(ids[1], Some(999)));
+        assert_eq!(order(&deck), ids);
+    }
+
+    #[test]
+    fn snapshot_restores_paused_with_files_that_still_exist() {
+        let dir = std::env::temp_dir().join(format!("deck-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let kept = dir.join("001.mp3");
+        std::fs::write(&kept, b"x").unwrap();
+
+        let mut deck = Deck::new(1.0, 1.0);
+        let ids = deck.add_reading("Notes", vec!["a".into(), "b".into(), "c".into()]);
+        deck.fill(ids[0], Some(Audio::File(kept.clone())));
+        deck.fill(ids[1], Some(Audio::File(dir.join("gone.mp3"))));
+        deck.next();
+
+        let json = serde_json::to_string(&deck.snapshot()).unwrap();
+        let back = Deck::restore(serde_json::from_str(&json).unwrap(), 1.5, 0.5);
+
+        let states: Vec<EntryState> = back.entries().iter().map(Entry::state).collect();
+        assert_eq!(states, vec![EntryState::Ready, EntryState::Failed, EntryState::Failed]);
+        assert_eq!(back.cursor(), 1);
+        assert!(back.paused);
+        assert_eq!(&*back.entries()[0].title, "Notes");
+        assert_eq!(back.speed(), 1.5);
+
+        let more = Deck::restore(serde_json::from_str(&json).unwrap(), 1.0, 1.0).add_reading("", vec!["d".into()]);
+        assert_eq!(more.len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
