@@ -1,0 +1,20 @@
+[package]
+name = "tts-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.103"
+arboard = "3.6.1"
+dirs = "6.0.0"
+enigo = "0.6.1"
+global-hotkey = "0.8.0"
+json5 = "1.3.1"
+regex = "1.12.4"
+reqwest = { version = "0.13.4", features = ["json"] }
+rodio = "0.22.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+tao = "0.35.3"
+tokio = { version = "1.52.3", features = ["full"] }
+tray-icon = "0.24.1"
