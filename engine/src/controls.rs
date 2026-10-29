@@ -93,6 +93,20 @@ pub struct SettingsChange {
     pub instructions: Option<String>,
 }
 
+/// The heading of the transcript.md that tts.py saves beside a reading's
+/// audio, or the folder name when there is none.
+fn reading_title(audio: &std::path::Path) -> String {
+    let Some(folder) = audio.parent() else {
+        return String::new();
+    };
+    std::fs::read_to_string(folder.join("transcript.md"))
+        .ok()
+        .and_then(|t| t.lines().next().map(|l| l.trim_start_matches('#').trim().to_string()))
+        .filter(|t| !t.is_empty())
+        .or_else(|| folder.file_name()?.to_str().map(String::from))
+        .unwrap_or_default()
+}
+
 struct Watch {
     /// None only for the moment between dropping a dead output and opening its replacement.
     output: Option<Output>,
@@ -300,12 +314,7 @@ impl Controls {
             .iter()
             .map(|p| std::fs::read_to_string(p.with_extension("txt")).unwrap_or_default())
             .collect();
-        let title = title.unwrap_or_else(|| {
-            paths
-                .first()
-                .and_then(|p| p.parent()?.file_name()?.to_str().map(String::from))
-                .unwrap_or_default()
-        });
+        let title = title.unwrap_or_else(|| paths.first().map(|p| reading_title(p)).unwrap_or_default());
 
         let ids = {
             let mut deck = lock(&self.deck);

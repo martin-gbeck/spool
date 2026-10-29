@@ -205,7 +205,13 @@ async fn handle(stream: UnixStream, controls: Controls) -> Result<(), Error> {
         }
 
         let reply = match serde_json::from_str::<Command>(&line) {
-            Ok(command) => apply(command, &controls),
+            Ok(command) => {
+                // Every command except the app's polling, so the log shows who did what.
+                if !matches!(command, Command::Status | Command::Queue | Command::Settings) {
+                    eprintln!("command: {}", line.chars().take(160).collect::<String>());
+                }
+                apply(command, &controls)
+            }
             Err(e) => Reply::failed(format!("bad command: {e}"), &controls),
         };
 
