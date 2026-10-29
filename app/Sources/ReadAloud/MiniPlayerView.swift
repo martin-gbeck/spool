@@ -4,6 +4,7 @@ import SwiftUI
 struct MiniPlayerView: View {
     @Environment(PlayerModel.self) private var model
     @Environment(\.openWindow) private var openWindow
+    @FocusState private var typing: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,6 +37,8 @@ struct MiniPlayerView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+
+            PasteField(focus: $typing)
 
             Divider()
 

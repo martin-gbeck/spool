@@ -99,6 +99,16 @@ final class PlayerModel {
         }
     }
 
+    /// Queues text behind whatever is playing, chunked as the hotkey's is,
+    /// and saved to the library the way tts.py saves Claude's readings.
+    func speak(_ text: String) {
+        var command: [String: Any] = ["cmd": "speak", "text": text]
+        if let folder = try? Library.newReading(for: text) {
+            command["save_dir"] = folder.path
+        }
+        send(command)
+    }
+
     func jump(to entry: Entry) { send(["cmd": "jump", "id": entry.id]) }
     func remove(_ entry: Entry) { send(["cmd": "remove", "id": entry.id]) }
     func clearPlayed() { send(["cmd": "clear_played"]) }

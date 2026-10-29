@@ -5,6 +5,7 @@ import SwiftUI
 struct PlayerView: View {
     @Environment(PlayerModel.self) private var model
     @FocusState private var focused: Bool
+    @FocusState private var typing: Bool
 
     var body: some View {
         HSplitView {
@@ -12,6 +13,9 @@ struct PlayerView: View {
                 Banners()
                 NowPlaying()
                     .padding(20)
+                PasteField(focus: $typing)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 16)
                 Divider()
                 HStack(spacing: 0) {
                     QueueColumn(kind: .upNext)
@@ -41,6 +45,8 @@ struct PlayerView: View {
     /// YouTube's keys: space and K pause, J and L jump 10 seconds, the arrows
     /// 5, Shift with . and , change speed.
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        // Typing in the paste field must not pause or seek.
+        if typing { return .ignored }
         switch (press.key, press.characters) {
         case (.space, _), (_, "k"): model.togglePlay()
         case (_, "j"): model.seek(by: -10)

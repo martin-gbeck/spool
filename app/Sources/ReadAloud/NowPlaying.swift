@@ -154,3 +154,31 @@ struct VolumeControl: View {
         .help("Volume of Read Aloud only")
     }
 }
+
+/// A field to paste text into. Return queues it behind whatever is playing,
+/// the same as Ctrl+Space; Option+Return adds a line break.
+struct PasteField: View {
+    @Environment(PlayerModel.self) private var model
+    @State private var text = ""
+    var focus: FocusState<Bool>.Binding
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField("Paste text to read…", text: $text, axis: .vertical)
+                .lineLimit(1...4)
+                .textFieldStyle(.roundedBorder)
+                .focused(focus)
+                .onSubmit(add)
+            Button("Add", action: add)
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Add to the queue (Return)")
+        }
+    }
+
+    private func add() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        model.speak(trimmed)
+        text = ""
+    }
+}

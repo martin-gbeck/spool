@@ -86,3 +86,8 @@ private func entry(_ id: UInt64, reading: UInt64 = 1, index: Int = 1) -> Entry {
     let cut = Format.preview(long, limit: 22)
     #expect(cut == "word word word word…")
 }
+
+@Test func slugMatchesThePythonLibraryNames() {
+    #expect(Library.slug("DBA3803: the Presentation primer!") == "dba3803-the-presentation-primer")
+    #expect(Library.slug("…") == "reading")
+}
