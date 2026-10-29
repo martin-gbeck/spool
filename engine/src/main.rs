@@ -1,10 +1,10 @@
+mod audio;
 mod chunking;
 mod clipboard;
 mod config;
 mod controls;
+mod deck;
 mod ipc;
-mod menu;
-mod menu_controls;
 mod tts;
 
 use std::io::Read;
@@ -16,6 +16,7 @@ use arboard::Clipboard;
 use tao::event::Event;
 
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 
 use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager,
@@ -30,18 +31,20 @@ use crate::controls::Controls;
 use crate::ipc::Command;
 
 const USAGE: &str = "\
-rust tts
+rust tts, the engine behind Read Aloud
 
-  rust-tts                    run the menu bar app (hotkey + socket)
-  rust-tts speak [text]       speak text, or stdin when no text is given
-  rust-tts pause|play|toggle  pause, resume, or flip whichever it is
-  rust-tts skip|stop          drop the current chunk, or drop everything
-  rust-tts status|quit
+  rust-tts                       run the engine (hotkey + socket, no window)
+  rust-tts speak [text]          speak text, or stdin when no text is given
+  rust-tts pause|play|toggle     pause, resume, or flip whichever it is
+  rust-tts next|previous|restart move between chunks or start this one over
+  rust-tts seek <seconds>        jump within the chunk, negative goes back
+  rust-tts speed <x>             playback speed, 0.5 to 3, pitch kept
+  rust-tts stop                  drop everything up next
+  rust-tts status|queue|quit
 ";
 
 enum AppEvent {
     Hotkey(GlobalHotKeyEvent),
-    Menu(tray_icon::menu::MenuEvent),
 }
 
 #[tokio::main]
@@ -60,20 +63,17 @@ async fn main() -> Result<(), Error> {
 
     // Load (or create on first run) the config file; resolves the api key too.
     // Arc because every spawned fetch task needs its own owned handle to it.
-    let config = std::sync::Arc::new(config::load()?);
+    let config = config::load()?;
 
     // Make loop
-    let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
+    let mut event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
+    // No Dock icon of its own: the Read Aloud app is the face, this is the engine.
+    event_loop.set_activation_policy(ActivationPolicy::Accessory);
 
     let hk_proxy = event_loop.create_proxy();
     // Set event handler for hotkey events
     GlobalHotKeyEvent::set_event_handler(Some(move |e| {
         let _ = hk_proxy.send_event(AppEvent::Hotkey(e));
-    }));
-
-    let menu_proxy = event_loop.create_proxy();
-    tray_icon::menu::MenuEvent::set_event_handler(Some(move |e| {
-        let _ = menu_proxy.send_event(AppEvent::Menu(e));
     }));
 
     // Hotkey from config if set ("ctrl+space" style string), else Ctrl+Space.
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Error> {
 
     // Both of these need macOS Accessibility permission, and neither is worth
     // refusing to start over: without them the hotkey is dead but the socket,
-    // the tray and everything driving them still work.
+    // and the app driving it still work.
     let mut write_conn = match Enigo::new(&enigo::Settings::default()) {
         Ok(enigo) => Some(enigo),
         Err(e) => {
@@ -118,8 +118,6 @@ async fn main() -> Result<(), Error> {
         },
     };
 
-    let _tray = menu::build_tray()?;
-
     let controls = Controls::new(config)?;
 
     // The event loop below owns the main thread from here on, so the socket
@@ -134,19 +132,13 @@ async fn main() -> Result<(), Error> {
     event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
 
-        if let Event::UserEvent(app_event) = event {
-            match app_event {
-                AppEvent::Hotkey(hotkey_event) => {
-                    if hotkey_event.state == HotKeyState::Pressed
-                        && let Some(write_conn) = write_conn.as_mut()
-                        && let Err(e) = speak_selection(write_conn, &controls)
-                    {
-                        eprintln!("{e}");
-                    }
-                }
-                AppEvent::Menu(menu_event) => menu_controls::menu_controls(menu_event, &controls),
-            }
-        };
+        if let Event::UserEvent(AppEvent::Hotkey(hotkey_event)) = event
+            && hotkey_event.state == HotKeyState::Pressed
+            && let Some(write_conn) = write_conn.as_mut()
+            && let Err(e) = speak_selection(write_conn, &controls)
+        {
+            eprintln!("{e}");
+        }
     });
 }
 
@@ -174,12 +166,23 @@ fn parse_command() -> Result<Option<Command>, Error> {
                 voice: None,
                 instructions: None,
                 save_dir: None,
+                title: None,
             }
         }
         "play" | "resume" => Command::Play,
         "pause" => Command::Pause,
         "toggle" => Command::Toggle,
-        "skip" => Command::Skip,
+        "skip" | "next" => Command::Skip,
+        "previous" | "prev" => Command::Previous,
+        "restart" => Command::Restart,
+        "seek" => Command::Seek {
+            by: Some(number(&args, "seek")?),
+            to: None,
+        },
+        "speed" => Command::SetSpeed {
+            speed: number(&args, "speed")? as f32,
+        },
+        "queue" => Command::Queue,
         "stop" => Command::Stop,
         "status" => Command::Status,
         "quit" => Command::Quit,
@@ -191,6 +194,13 @@ fn parse_command() -> Result<Option<Command>, Error> {
     };
 
     Ok(Some(command))
+}
+
+fn number(args: &[String], verb: &str) -> Result<f64, Error> {
+    match args.get(1).map(|a| a.parse::<f64>()) {
+        Some(Ok(n)) => Ok(n),
+        _ => bail!("{verb} needs a number\n\n{USAGE}"),
+    }
 }
 
 /// The hotkey path: copy whatever is selected, speak it, put the clipboard back
@@ -220,7 +230,7 @@ fn speak_selection(write_conn: &mut Enigo, controls: &Controls) -> Result<(), Er
         text = clip_text;
     }
 
-    controls.speak(&text, None, None, None)?;
+    controls.speak(&text, None, None, None, None)?;
 
     Ok(())
 }

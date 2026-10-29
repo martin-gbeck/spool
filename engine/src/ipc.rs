@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::net::{UnixListener, UnixStream};
 
-use crate::controls::{Controls, Status};
+use crate::controls::{Controls, QueueView, SettingsChange, SettingsView, Status};
 
 /// One JSON object per line, in and out. Anything that can drive the app from
-/// the outside goes through here, which is what the Python client talks to.
+/// the outside goes through here: the Python client, the desktop app and the CLI.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Command {
@@ -24,15 +24,41 @@ pub enum Command {
         /// When set, each chunk's audio and text land here as 001.mp3, 001.txt...
         #[serde(default)]
         save_dir: Option<String>,
+        /// Shown in the app; the first words of the text when missing.
+        #[serde(default)]
+        title: Option<String>,
     },
     /// Queue audio files saved by an earlier speak, in the order given.
-    PlayFiles { paths: Vec<String> },
+    PlayFiles {
+        paths: Vec<String>,
+        #[serde(default)]
+        title: Option<String>,
+    },
     Play,
     Pause,
     Toggle,
+    /// Next chunk. `next` is the same thing.
+    #[serde(alias = "next")]
     Skip,
+    Previous,
+    Restart,
+    /// Relative with `by`, absolute with `to`, in seconds within the current chunk.
+    Seek {
+        #[serde(default)]
+        by: Option<f64>,
+        #[serde(default)]
+        to: Option<f64>,
+    },
+    Jump { id: u64 },
+    Remove { id: u64 },
+    ClearPlayed,
     Stop,
+    SetSpeed { speed: f32 },
+    SetVolume { volume: f32 },
+    Settings,
+    SetSettings(SettingsChange),
     Status,
+    Queue,
     Quit,
 }
 
@@ -43,6 +69,10 @@ struct Reply {
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chunks: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queue: Option<QueueView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settings: Option<SettingsView>,
     #[serde(flatten)]
     status: Status,
 }
@@ -53,6 +83,8 @@ impl Reply {
             ok: true,
             error: None,
             chunks: None,
+            queue: None,
+            settings: None,
             status: controls.status(),
         }
     }
@@ -69,6 +101,21 @@ impl Reply {
             ok: false,
             error: Some(message),
             ..Self::ok(controls)
+        }
+    }
+
+    fn from_result(result: Result<(), Error>, controls: &Controls) -> Self {
+        match result {
+            Ok(()) => Self::ok(controls),
+            Err(e) => Self::failed(e.to_string(), controls),
+        }
+    }
+
+    fn found(found: bool, id: u64, controls: &Controls) -> Self {
+        if found {
+            Self::ok(controls)
+        } else {
+            Self::failed(format!("no chunk with id {id}"), controls)
         }
     }
 }
@@ -178,12 +225,13 @@ fn apply(command: Command, controls: &Controls) -> Reply {
             voice,
             instructions,
             save_dir,
-        } => match controls.speak(&text, voice, instructions, save_dir.map(PathBuf::from)) {
+            title,
+        } => match controls.speak(&text, voice, instructions, save_dir.map(PathBuf::from), title) {
             Ok(chunks) => Reply::spoken(chunks, controls),
             Err(e) => Reply::failed(e.to_string(), controls),
         },
-        Command::PlayFiles { paths } => {
-            let count = controls.play_files(paths.into_iter().map(PathBuf::from).collect());
+        Command::PlayFiles { paths, title } => {
+            let count = controls.play_files(paths.into_iter().map(PathBuf::from).collect(), title);
             Reply::spoken(count, controls)
         }
         Command::Play => {
@@ -202,11 +250,48 @@ fn apply(command: Command, controls: &Controls) -> Reply {
             controls.skip();
             Reply::ok(controls)
         }
+        Command::Previous => {
+            controls.previous();
+            Reply::ok(controls)
+        }
+        Command::Restart => {
+            controls.restart();
+            Reply::ok(controls)
+        }
+        Command::Seek { by, to } => {
+            match (by, to) {
+                (_, Some(to)) => controls.seek_to(to),
+                (Some(by), None) => controls.seek_by(by),
+                (None, None) => return Reply::failed("seek needs by or to".into(), controls),
+            }
+            Reply::ok(controls)
+        }
+        Command::Jump { id } => Reply::found(controls.jump(id), id, controls),
+        Command::Remove { id } => Reply::found(controls.remove(id), id, controls),
+        Command::ClearPlayed => {
+            controls.clear_played();
+            Reply::ok(controls)
+        }
         Command::Stop => {
             controls.stop();
             Reply::ok(controls)
         }
+        Command::SetSpeed { speed } => Reply::from_result(controls.set_speed(speed), controls),
+        Command::SetVolume { volume } => Reply::from_result(controls.set_volume(volume), controls),
+        Command::Settings => Reply {
+            settings: Some(controls.settings()),
+            ..Reply::ok(controls)
+        },
+        Command::SetSettings(change) => {
+            let mut reply = Reply::from_result(controls.change_settings(change), controls);
+            reply.settings = Some(controls.settings());
+            reply
+        }
         Command::Status => Reply::ok(controls),
+        Command::Queue => Reply {
+            queue: Some(controls.queue()),
+            ..Reply::ok(controls)
+        },
         Command::Quit => {
             controls.stop();
             // Off the socket path before the reply goes out, so a call that
@@ -221,5 +306,20 @@ fn apply(command: Command, controls: &Controls) -> Reply {
             });
             reply
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commands_parse_from_the_json_the_clients_send() {
+        let parse = |s: &str| serde_json::from_str::<Command>(s).unwrap();
+        assert!(matches!(parse(r#"{"cmd":"next"}"#), Command::Skip));
+        assert!(matches!(parse(r#"{"cmd":"seek","by":-10}"#), Command::Seek { by: Some(b), to: None } if b == -10.0));
+        assert!(matches!(parse(r#"{"cmd":"jump","id":7}"#), Command::Jump { id: 7 }));
+        assert!(matches!(parse(r#"{"cmd":"set_settings","voice":"ash"}"#), Command::SetSettings(c) if c.voice.as_deref() == Some("ash") && c.model.is_none()));
+        assert!(matches!(parse(r#"{"cmd":"speak","text":"hi","save_dir":"/x"}"#), Command::Speak { title: None, .. }));
     }
 }

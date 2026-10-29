@@ -1,0 +1,3 @@
+# Outside the repo: cargo writes gigabytes and ~/Documents may sync to iCloud.
+[build]
+target-dir = "/Users/mb/.cache/read-aloud-target"
