@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the engine and the app, and installs ~/Applications/Read Aloud.app.
+# Builds the engine and the app, and installs /Applications/Read Aloud.app.
 #
 #   ./build.sh          build, install, and start it
 #   ./build.sh --no-open
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP="$HOME/Applications/Read Aloud.app"
+APP="/Applications/Read Aloud.app"
 SWIFT_SCRATCH="$HOME/.cache/read-aloud-swift"
 CLI_LINK="$HOME/.local/bin/rust-tts"
 
