@@ -28,6 +28,7 @@ use enigo::Enigo;
 
 use crate::clipboard::CurrentClipboard;
 use crate::controls::Controls;
+use crate::deck::Place;
 use crate::ipc::Command;
 
 const USAGE: &str = "\
@@ -167,6 +168,7 @@ fn parse_command() -> Result<Option<Command>, Error> {
                 instructions: None,
                 save_dir: None,
                 title: None,
+                at: Place::Last,
             }
         }
         "play" | "resume" => Command::Play,
@@ -230,7 +232,7 @@ fn speak_selection(write_conn: &mut Enigo, controls: &Controls) -> Result<(), Er
         text = clip_text;
     }
 
-    controls.speak(&text, None, None, None, None)?;
+    controls.speak(&text, None, None, None, None, Place::Last)?;
 
     Ok(())
 }

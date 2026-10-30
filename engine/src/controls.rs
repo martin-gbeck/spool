@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::audio::{self, Output, lock};
 use crate::config::{self, Config};
-use crate::deck::{Audio, Deck, EntryState, Saved};
+use crate::deck::{Audio, Deck, EntryState, Place, Saved};
 use crate::{chunking, tts};
 
 /// How long the output may stop pulling audio while it should be playing
@@ -302,6 +302,7 @@ impl Controls {
         instructions: Option<String>,
         save_dir: Option<PathBuf>,
         title: Option<String>,
+        place: Place,
     ) -> Result<usize, Error> {
         let text = text.trim();
         if text.is_empty() {
@@ -331,7 +332,7 @@ impl Controls {
             let mut deck = lock(&self.deck);
             // An earlier Pause would otherwise swallow this request silently.
             deck.paused = false;
-            deck.add_reading(title.as_deref().unwrap_or_default(), chunks.clone())
+            deck.add_reading(title.as_deref().unwrap_or_default(), chunks.clone(), place)
         };
 
         for (index, (id, text)) in ids.into_iter().zip(chunks).enumerate() {
@@ -380,7 +381,7 @@ impl Controls {
     /// Queues audio files, with the text saved beside each one so the lists
     /// show what they say. A file with no text beside it, like an mp3 from
     /// elsewhere, shows its file name instead. Returns how many were queued.
-    pub fn play_files(&self, paths: Vec<PathBuf>, title: Option<String>) -> usize {
+    pub fn play_files(&self, paths: Vec<PathBuf>, title: Option<String>, place: Place) -> usize {
         let texts = paths
             .iter()
             .map(|p| {
@@ -396,7 +397,7 @@ impl Controls {
         let ids = {
             let mut deck = lock(&self.deck);
             deck.paused = false;
-            deck.add_reading(&title, texts)
+            deck.add_reading(&title, texts, place)
         };
 
         let count = ids.len();

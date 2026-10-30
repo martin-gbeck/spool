@@ -188,7 +188,7 @@ mod tests {
     /// One reading of `seconds` of a 220 Hz tone, ready to play.
     fn deck_with_tone(seconds: usize) -> Arc<Mutex<Deck>> {
         let mut deck = Deck::new(1.0, 1.0);
-        let ids = deck.add_reading("t", vec!["tone".into()]);
+        let ids = deck.add_reading("t", vec!["tone".into()], crate::deck::Place::Last);
         let tone: Vec<f32> = (0..RATE as usize * seconds)
             .map(|i| (i as f32 * 220.0 * std::f32::consts::TAU / RATE as f32).sin() * 0.5)
             .collect();

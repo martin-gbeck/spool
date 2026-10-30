@@ -99,9 +99,11 @@ final class PlayerModel {
         }
     }
 
-    /// Queues text behind whatever is playing, chunked as the hotkey's is.
+    /// Queues text at `place`, chunked as the hotkey's is.
     /// The engine saves it to the library like every other reading.
-    func speak(_ text: String) { send(["cmd": "speak", "text": text]) }
+    func speak(_ text: String, at place: Place = .last) {
+        send(["cmd": "speak", "text": text, "at": place.rawValue])
+    }
 
     /// Queues audio files or reading folders as they are, with no new speech.
     /// Returns false when none of them held audio.

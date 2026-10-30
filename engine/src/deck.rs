@@ -18,6 +18,19 @@ pub const RATE: u32 = 24_000;
 const RESTART_WITHIN: Duration = Duration::from_secs(3);
 /// Played entries kept for going back.
 const HISTORY_LIMIT: usize = 300;
+
+/// Where a new reading goes in the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Place {
+    /// Plays at once. The chunk it interrupts waits at the top of up next, from its start.
+    Now,
+    /// Plays when the current chunk ends.
+    Next,
+    /// After everything already queued. Ctrl+Space always uses this.
+    #[default]
+    Last,
+}
 /// Entries around the cursor that keep their decoded audio: one back, two ahead.
 const KEEP_BEHIND: usize = 1;
 const KEEP_AHEAD: usize = 2;
@@ -190,8 +203,8 @@ impl Deck {
         self.changed();
     }
 
-    /// Adds one reading as loading entries at the end and returns their ids in order.
-    pub fn add_reading(&mut self, title: &str, texts: Vec<String>) -> Vec<u64> {
+    /// Adds one reading as loading entries at `place` and returns their ids in order.
+    pub fn add_reading(&mut self, title: &str, texts: Vec<String>, place: Place) -> Vec<u64> {
         let reading = self.next_reading;
         self.next_reading += 1;
 
@@ -200,13 +213,20 @@ impl Deck {
             t => t.into(),
         };
 
-        let ids = texts
+        let playing = self.cursor < self.entries.len();
+        let at = match place {
+            Place::Now => self.cursor,
+            Place::Next if playing => self.cursor + 1,
+            Place::Next | Place::Last => self.entries.len(),
+        };
+
+        let new: Vec<Entry> = texts
             .into_iter()
             .enumerate()
             .map(|(index, text)| {
                 let id = self.next_id;
                 self.next_id += 1;
-                self.entries.push(Entry {
+                Entry {
                     id,
                     reading,
                     title: title.clone(),
@@ -215,12 +235,21 @@ impl Deck {
                     audio: None,
                     failed: false,
                     pcm: None,
-                });
-                id
+                }
             })
             .collect();
+        let ids = new.iter().map(|e| e.id).collect();
+        let added = !new.is_empty();
+        self.entries.splice(at..at, new);
 
-        self.changed();
+        // The cursor already points at the first new entry; only the position
+        // inside the interrupted one has to go.
+        if place == Place::Now && playing && added {
+            self.pos = 0;
+            self.jumped();
+        } else {
+            self.changed();
+        }
         ids
     }
 
@@ -543,7 +572,7 @@ mod tests {
     /// A deck with `n` ready entries of one second each, every sample equal to its entry number.
     fn deck_with(n: usize) -> (Deck, Vec<u64>) {
         let mut deck = Deck::new(1.0, 1.0);
-        let ids = deck.add_reading("t", (1..=n).map(|i| format!("chunk {i}")).collect());
+        let ids = deck.add_reading("t", (1..=n).map(|i| format!("chunk {i}")).collect(), Place::Last);
         for (i, id) in ids.iter().enumerate() {
             deck.fill(*id, Some(Audio::Bytes(Arc::from(vec![0u8; 4]))));
             deck.set_pcm(*id, Some(Arc::from(vec![(i + 1) as f32; RATE as usize])));
@@ -553,6 +582,44 @@ mod tests {
 
     fn current_id(deck: &Deck) -> Option<u64> {
         deck.current().map(|e| e.id)
+    }
+
+    #[test]
+    fn next_goes_after_the_current_chunk_and_last_at_the_end() {
+        let (mut deck, ids) = deck_with(3);
+        deck.read(&mut [0.0; 10]);
+        let last = deck.add_reading("", vec!["l".into()], Place::Last);
+        let next = deck.add_reading("", vec!["n1".into(), "n2".into()], Place::Next);
+
+        let order: Vec<u64> = deck.entries.iter().map(|e| e.id).collect();
+        assert_eq!(order, [ids[0], next[0], next[1], ids[1], ids[2], last[0]]);
+        // The chunk playing carries on where it was.
+        assert_eq!(current_id(&deck), Some(ids[0]));
+        assert_eq!(deck.pos, 10);
+    }
+
+    #[test]
+    fn now_plays_at_once_and_the_interrupted_chunk_waits_from_its_start() {
+        let (mut deck, ids) = deck_with(2);
+        deck.read(&mut [0.0; 10]);
+        let epoch = deck.epoch();
+        let now = deck.add_reading("", vec!["x".into()], Place::Now);
+
+        assert_eq!(current_id(&deck), Some(now[0]));
+        assert_eq!(deck.pos, 0);
+        assert!(deck.epoch() > epoch);
+        let order: Vec<u64> = deck.entries.iter().map(|e| e.id).collect();
+        assert_eq!(order, [now[0], ids[0], ids[1]]);
+    }
+
+    #[test]
+    fn every_place_on_an_idle_deck_plays_the_new_reading() {
+        for place in [Place::Now, Place::Next, Place::Last] {
+            let (mut deck, _) = deck_with(1);
+            deck.next();
+            let new = deck.add_reading("", vec!["x".into()], place);
+            assert_eq!(current_id(&deck), Some(new[0]), "{place:?}");
+        }
     }
 
     #[test]
@@ -574,7 +641,7 @@ mod tests {
     #[test]
     fn waits_for_an_entry_still_loading() {
         let mut deck = Deck::new(1.0, 1.0);
-        let ids = deck.add_reading("", vec!["a".into(), "b".into()]);
+        let ids = deck.add_reading("", vec!["a".into(), "b".into()], Place::Last);
         deck.fill(ids[0], Some(Audio::Bytes(Arc::from(vec![0u8]))));
         deck.set_pcm(ids[0], Some(Arc::from(vec![1.0; 100])));
 
@@ -605,7 +672,7 @@ mod tests {
         assert_eq!(current_id(&deck), Some(ids[0]));
 
         let mut long = Deck::new(1.0, 1.0);
-        let lid = long.add_reading("", vec!["a".into(), "b".into()]);
+        let lid = long.add_reading("", vec!["a".into(), "b".into()], Place::Last);
         for id in &lid {
             long.fill(*id, Some(Audio::Bytes(Arc::from(vec![0u8]))));
             long.set_pcm(*id, Some(Arc::from(vec![0.0; RATE as usize * 10])));
@@ -681,7 +748,7 @@ mod tests {
         assert!(deck.current().is_none());
         assert!(!deck.paused);
 
-        let new = deck.add_reading("", vec!["x".into()]);
+        let new = deck.add_reading("", vec!["x".into()], Place::Last);
         assert_eq!(current_id(&deck), Some(new[0]));
     }
 
@@ -698,7 +765,7 @@ mod tests {
     #[test]
     fn fill_after_removal_is_dropped() {
         let mut deck = Deck::new(1.0, 1.0);
-        let ids = deck.add_reading("", vec!["a".into()]);
+        let ids = deck.add_reading("", vec!["a".into()], Place::Last);
         deck.stop();
         deck.clear_played();
         assert!(!deck.fill(ids[0], Some(Audio::Bytes(Arc::from(vec![0u8])))));
@@ -720,7 +787,7 @@ mod tests {
     #[test]
     fn history_is_capped() {
         let mut deck = Deck::new(1.0, 1.0);
-        let ids = deck.add_reading("", (0..HISTORY_LIMIT + 5).map(|i| i.to_string()).collect());
+        let ids = deck.add_reading("", (0..HISTORY_LIMIT + 5).map(|i| i.to_string()).collect(), Place::Last);
         deck.jump(*ids.last().unwrap());
         deck.next();
         assert_eq!(deck.cursor(), HISTORY_LIMIT);
@@ -730,7 +797,7 @@ mod tests {
     #[test]
     fn untitled_reading_takes_its_first_words() {
         let mut deck = Deck::new(1.0, 1.0);
-        deck.add_reading(" ", vec!["one two three four five six seven eight nine".into()]);
+        deck.add_reading(" ", vec!["one two three four five six seven eight nine".into()], Place::Last);
         assert_eq!(&*deck.entries()[0].title, "one two three four five six seven eight");
     }
 
@@ -791,7 +858,7 @@ mod tests {
         std::fs::write(&kept, b"x").unwrap();
 
         let mut deck = Deck::new(1.0, 1.0);
-        let ids = deck.add_reading("Notes", vec!["a".into(), "b".into(), "c".into()]);
+        let ids = deck.add_reading("Notes", vec!["a".into(), "b".into(), "c".into()], Place::Last);
         deck.fill(ids[0], Some(Audio::File(kept.clone())));
         deck.fill(ids[1], Some(Audio::File(dir.join("gone.mp3"))));
         deck.next();
@@ -806,7 +873,7 @@ mod tests {
         assert_eq!(&*back.entries()[0].title, "Notes");
         assert_eq!(back.speed(), 1.5);
 
-        let more = Deck::restore(serde_json::from_str(&json).unwrap(), 1.0, 1.0).add_reading("", vec!["d".into()]);
+        let more = Deck::restore(serde_json::from_str(&json).unwrap(), 1.0, 1.0).add_reading("", vec!["d".into()], Place::Last);
         assert_eq!(more.len(), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }

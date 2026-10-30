@@ -9,6 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::controls::{Controls, QueueView, SettingsChange, SettingsView, Status};
+use crate::deck::Place;
 
 /// One JSON object per line, in and out. Anything that can drive the app from
 /// the outside goes through here: the Python client, the desktop app and the CLI.
@@ -27,12 +28,17 @@ pub enum Command {
         /// Shown in the app; the first words of the text when missing.
         #[serde(default)]
         title: Option<String>,
+        /// now, next or last (the default).
+        #[serde(default)]
+        at: Place,
     },
     /// Queue audio files saved by an earlier speak, in the order given.
     PlayFiles {
         paths: Vec<String>,
         #[serde(default)]
         title: Option<String>,
+        #[serde(default)]
+        at: Place,
     },
     Play,
     Pause,
@@ -238,12 +244,13 @@ fn apply(command: Command, controls: &Controls) -> Reply {
             instructions,
             save_dir,
             title,
-        } => match controls.speak(&text, voice, instructions, save_dir.map(PathBuf::from), title) {
+            at,
+        } => match controls.speak(&text, voice, instructions, save_dir.map(PathBuf::from), title, at) {
             Ok(chunks) => Reply::spoken(chunks, controls),
             Err(e) => Reply::failed(e.to_string(), controls),
         },
-        Command::PlayFiles { paths, title } => {
-            let count = controls.play_files(paths.into_iter().map(PathBuf::from).collect(), title);
+        Command::PlayFiles { paths, title, at } => {
+            let count = controls.play_files(paths.into_iter().map(PathBuf::from).collect(), title, at);
             Reply::spoken(count, controls)
         }
         Command::Play => {
@@ -339,6 +346,8 @@ mod tests {
         assert!(matches!(parse(r#"{"cmd":"seek","by":-10}"#), Command::Seek { by: Some(b), to: None } if b == -10.0));
         assert!(matches!(parse(r#"{"cmd":"jump","id":7}"#), Command::Jump { id: 7 }));
         assert!(matches!(parse(r#"{"cmd":"set_settings","voice":"ash"}"#), Command::SetSettings(c) if c.voice.as_deref() == Some("ash") && c.model.is_none()));
-        assert!(matches!(parse(r#"{"cmd":"speak","text":"hi","save_dir":"/x"}"#), Command::Speak { title: None, .. }));
+        assert!(matches!(parse(r#"{"cmd":"speak","text":"hi","save_dir":"/x"}"#), Command::Speak { title: None, at: Place::Last, .. }));
+        assert!(matches!(parse(r#"{"cmd":"speak","text":"hi","at":"now"}"#), Command::Speak { at: Place::Now, .. }));
+        assert!(matches!(parse(r#"{"cmd":"play_files","paths":[],"at":"next"}"#), Command::PlayFiles { at: Place::Next, .. }));
     }
 }

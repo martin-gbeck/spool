@@ -162,23 +162,31 @@ struct PasteField: View {
     @State private var text = ""
     var focus: FocusState<Bool>.Binding
 
+    private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField("Paste text to read…", text: $text, axis: .vertical)
                 .lineLimit(1...4)
                 .textFieldStyle(.roundedBorder)
                 .focused(focus)
-                .onSubmit(add)
-            Button("Add", action: add)
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help("Add to the queue (Return)")
+                .onSubmit { add(at: .last) }
+            HStack(spacing: 4) {
+                Button("Now") { add(at: .now) }
+                    .help("Play it at once. What was playing waits at the top of up next.")
+                Button("Next") { add(at: .next) }
+                    .help("Play it when the current chunk ends.")
+                Button("Last") { add(at: .last) }
+                    .help("Add it to the end of the queue (Return)")
+            }
+            .disabled(isEmpty)
         }
     }
 
-    private func add() {
+    private func add(at place: Place) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        model.speak(trimmed)
+        model.speak(trimmed, at: place)
         text = ""
     }
 }

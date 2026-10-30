@@ -116,3 +116,13 @@ enum Format {
         return min(maxSpeed, max(minSpeed, next))
     }
 }
+
+/// Where new speech goes in the queue. The engine takes the raw value.
+enum Place: String {
+    /// Plays at once; the interrupted chunk waits at the top of up next.
+    case now
+    /// Plays when the current chunk ends.
+    case next
+    /// After everything queued.
+    case last
+}
