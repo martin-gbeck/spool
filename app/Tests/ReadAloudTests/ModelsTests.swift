@@ -119,3 +119,17 @@ private func entry(_ id: UInt64, reading: UInt64 = 1, index: Int = 1) -> Entry {
     #expect(readings.map(\.title) == [nil, "talk"])
     #expect(AudioFiles.readings(from: [loose.appendingPathComponent("notes.pdf")]).isEmpty)
 }
+
+@Test func nowPlayingIsResentOnlyWhenMacOSWouldShowSomethingWrong() {
+    let start = Date()
+    let old = NowPlayingSnapshot(id: 1, paused: false, speed: 1.5, duration: 60, position: 10, at: start)
+    func later(_ seconds: Double, position: Double, id: UInt64 = 1, paused: Bool = false) -> NowPlayingSnapshot {
+        NowPlayingSnapshot(id: id, paused: paused, speed: 1.5, duration: 60, position: position, at: start + seconds)
+    }
+    // Two seconds at 1.5x is three seconds of chunk: macOS's clock is right.
+    #expect(!later(2, position: 13).differs(from: old))
+    #expect(later(2, position: 23).differs(from: old))
+    #expect(later(2, position: 13, paused: true).differs(from: old))
+    #expect(later(0.25, position: 0, id: 2).differs(from: old))
+    #expect(later(0, position: 10).differs(from: nil))
+}

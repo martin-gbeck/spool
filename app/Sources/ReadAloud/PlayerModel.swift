@@ -20,8 +20,10 @@ final class PlayerModel {
     private var lastRevision: UInt64?
     private var lastLaunch = Date.distantPast
     private var polling: Task<Void, Never>?
+    private var mediaKeys: MediaKeys?
 
     init() {
+        mediaKeys = MediaKeys(model: self)
         polling = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
@@ -53,6 +55,7 @@ final class PlayerModel {
             lastRevision = nil
             startEngineIfDue()
         }
+        mediaKeys?.update(status: status, current: queue.current)
     }
 
     /// Starts the engine at most every five seconds, so one that crashes on
@@ -85,6 +88,8 @@ final class PlayerModel {
     // MARK: Transport
 
     func togglePlay() { send(["cmd": "toggle"]) }
+    func play() { send(["cmd": "play"]) }
+    func pause() { send(["cmd": "pause"]) }
     func next() { send(["cmd": "next"]) }
     func previous() { send(["cmd": "previous"]) }
     func restart() { send(["cmd": "restart"]) }
