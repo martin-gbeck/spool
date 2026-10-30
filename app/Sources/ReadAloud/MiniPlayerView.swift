@@ -28,7 +28,7 @@ struct MiniPlayerView: View {
             HStack {
                 TransportButtons(size: .small)
                 Spacer()
-                SpeedMenu()
+                SpeedSlider(width: 90)
             }
 
             if let next = model.queue.upNext.first {

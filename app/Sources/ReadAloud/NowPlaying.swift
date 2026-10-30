@@ -22,7 +22,7 @@ struct NowPlaying: View {
                 TransportButtons(size: .large)
                 Spacer()
                 VolumeControl()
-                SpeedMenu()
+                SpeedSlider()
             }
         }
     }
@@ -103,32 +103,40 @@ struct TransportButtons: View {
     }
 }
 
-struct SpeedMenu: View {
+/// Playback speed as a slider from 0.5× to 2× in steps of 0.05. Clicking the
+/// number puts it back to 1×.
+struct SpeedSlider: View {
     @Environment(PlayerModel.self) private var model
+    @State private var dragging: Double?
+    var width: CGFloat = 100
+
+    private var shown: Double { dragging ?? min(Format.maxSpeed, max(Format.minSpeed, model.speed)) }
 
     var body: some View {
-        Menu {
-            ForEach(Format.speeds, id: \.self) { speed in
-                Button {
-                    model.setSpeed(speed)
-                } label: {
-                    if abs(speed - model.speed) < 0.01 {
-                        Label(Format.speed(speed), systemImage: "checkmark")
-                    } else {
-                        Text(Format.speed(speed))
+        HStack(spacing: 6) {
+            Slider(
+                value: Binding(
+                    get: { shown },
+                    set: { value in
+                        // Snapped here, not with Slider's step, which draws a tick for every notch.
+                        let rounded = ((value / Format.speedStep).rounded() * Format.speedStep * 100).rounded() / 100
+                        guard rounded != dragging else { return }
+                        dragging = rounded
+                        model.setSpeed(rounded)
                     }
-                }
-            }
-            Divider()
-            Button("Faster (⇧.)") { model.faster() }
-            Button("Slower (⇧,)") { model.slower() }
-        } label: {
-            Text(Format.speed(model.speed))
+                ),
+                in: Format.minSpeed...Format.maxSpeed,
+                onEditingChanged: { editing in if !editing { dragging = nil } }
+            )
+            .controlSize(.small)
+            .frame(width: width)
+            Button(Format.speed(shown)) { model.setSpeed(1) }
+                .buttonStyle(.borderless)
                 .monospacedDigit()
+                .frame(width: 42, alignment: .leading)
+                .help("Click for normal speed")
         }
-        .menuStyle(.borderedButton)
-        .fixedSize()
-        .help("Playback speed. The pitch stays the same.")
+        .help("Playback speed. The pitch stays the same. ⇧. and ⇧, step it by 0.05.")
     }
 }
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Builds the engine and the app, and installs /Applications/Read Aloud.app.
 #
-#   ./build.sh          build, install, and start it
-#   ./build.sh --no-open
+#   ./build.sh                build, install, and start it
+#   ./build.sh --no-open      stop the running copy, install, leave it closed
+#   ./build.sh --keep-running install without touching the running copy; the
+#                             new one starts the next time the app is opened
 #
 # Signed with the first Apple Development identity in the keychain, so the
 # Accessibility grant survives rebuilds (an ad-hoc signature changes every
@@ -24,6 +26,8 @@ echo "==> app"
 swift build -c release --package-path "$ROOT/app" --scratch-path "$SWIFT_SCRATCH"
 BIN="$(swift build -c release --package-path "$ROOT/app" --scratch-path "$SWIFT_SCRATCH" --show-bin-path)/ReadAloud"
 
+MODE="${1:-}"
+if [[ "$MODE" != "--keep-running" ]]; then
 echo "==> stopping the running copy"
 # Builds before 2026-10-30 kept the engine in MacOS, later ones in Helpers.
 for old in "$APP/Contents/Helpers/rust-tts" "$APP/Contents/MacOS/rust-tts"; do
@@ -36,6 +40,7 @@ fi
 # A menu bar app ignores AppleScript's quit, so this goes by process.
 pkill -f "Read Aloud.app/Contents/MacOS/ReadAloud" || true
 sleep 0.5
+fi
 
 echo "==> bundle"
 rm -rf "$APP"
@@ -66,6 +71,6 @@ rm -f "$CLI_LINK"
 ln -s "$APP/Contents/Helpers/rust-tts" "$CLI_LINK"
 
 echo "==> installed $APP"
-if [[ "${1:-}" != "--no-open" ]]; then
+if [[ -z "$MODE" ]]; then
     open "$APP"
 fi

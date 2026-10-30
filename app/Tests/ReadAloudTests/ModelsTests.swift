@@ -73,10 +73,11 @@ private func entry(_ id: UInt64, reading: UInt64 = 1, index: Int = 1) -> Entry {
     #expect(Format.speed(1.25) == "1.25×")
 }
 
-@Test func speedStepsLikeYouTubeAndStaysInRange() {
-    #expect(Format.stepped(1, by: 1) == 1.25)
-    #expect(Format.stepped(1.3, by: -1) == 1)
-    #expect(Format.stepped(3, by: 1) == 3)
+@Test func speedStepsByFiveHundredthsAndStaysInRange() {
+    #expect(Format.stepped(1, by: 1) == 1.05)
+    #expect(Format.stepped(1.1, by: 1) == 1.15)
+    #expect(Format.stepped(1.32, by: -1) == 1.25)
+    #expect(Format.stepped(2, by: 1) == 2)
     #expect(Format.stepped(0.5, by: -1) == 0.5)
 }
 

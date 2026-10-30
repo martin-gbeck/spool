@@ -82,11 +82,12 @@ struct SettingsReply: Decodable {
 }
 
 enum Format {
-    static let speeds: [Double] = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3]
+    /// The slider's range. The engine takes up to 3×, but past 2× speech
+    /// stops being worth listening to, and below 0.5× the stretching smears it.
     static let minSpeed = 0.5
-    static let maxSpeed = 3.0
-    /// One press of faster or slower, as on YouTube.
-    static let speedStep = 0.25
+    static let maxSpeed = 2.0
+    /// One notch of the slider and one press of faster or slower: fine enough for 1.15×.
+    static let speedStep = 0.05
 
     /// 75 -> "1:15". Negative and missing values show as 0:00.
     static func time(_ seconds: Double?) -> String {
@@ -113,7 +114,8 @@ enum Format {
 
     static func stepped(_ speed: Double, by direction: Double) -> Double {
         let next = (speed / speedStep).rounded() * speedStep + direction * speedStep
-        return min(maxSpeed, max(minSpeed, next))
+        // Rounded to hundredths, so steps of 0.05 do not drift to 1.1500000000000001.
+        return min(maxSpeed, max(minSpeed, (next * 100).rounded() / 100))
     }
 }
 
