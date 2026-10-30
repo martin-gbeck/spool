@@ -103,6 +103,36 @@ final class PlayerModel {
     /// The engine saves it to the library like every other reading.
     func speak(_ text: String) { send(["cmd": "speak", "text": text]) }
 
+    /// Queues audio files or reading folders as they are, with no new speech.
+    /// Returns false when none of them held audio.
+    @discardableResult
+    func add(files urls: [URL]) -> Bool {
+        let readings = AudioFiles.readings(from: urls)
+        Task {
+            for reading in readings {
+                var command: [String: Any] = ["cmd": "play_files", "paths": reading.paths]
+                if let title = reading.title { command["title"] = title }
+                _ = try? await engine.send(command, as: Status.self)
+            }
+            await refresh()
+        }
+        return !readings.isEmpty
+    }
+
+    /// Opens a file picker for audio files or saved readings, starting in the library.
+    func chooseAudio() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Audio"
+        panel.prompt = "Add to Queue"
+        panel.allowedContentTypes = AudioFiles.types
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = Engine.logURL.deletingLastPathComponent().appendingPathComponent("library")
+        NSApp.activate()
+        guard panel.runModal() == .OK else { return }
+        add(files: panel.urls)
+    }
+
     /// Puts `id` just before `before`, or at the end of the queue.
     func move(_ id: UInt64, before: UInt64?) {
         var command: [String: Any] = ["cmd": "move", "id": id]

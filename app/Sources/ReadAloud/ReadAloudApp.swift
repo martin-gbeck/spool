@@ -38,6 +38,10 @@ struct PlaybackCommands: Commands {
     let model: PlayerModel
 
     var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Add Audio…") { model.chooseAudio() }
+                .keyboardShortcut("o")
+        }
         CommandMenu("Playback") {
             Button(model.isPlaying ? "Pause" : "Play") { model.togglePlay() }
                 .keyboardShortcut("p")

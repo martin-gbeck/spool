@@ -30,6 +30,8 @@ struct PlayerView: View {
                 .frame(minWidth: 280, idealWidth: 400, maxWidth: .infinity)
         }
         .navigationTitle(model.current?.title ?? "Read Aloud")
+        // Audio files or reading folders dropped anywhere on the window go to the end of the queue.
+        .dropDestination(for: URL.self) { urls, _ in model.add(files: urls) }
         .focusable()
         .focusEffectDisabled()
         .focused($focused)

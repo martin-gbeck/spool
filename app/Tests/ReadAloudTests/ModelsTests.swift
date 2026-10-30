@@ -92,3 +92,30 @@ private func entry(_ id: UInt64, reading: UInt64 = 1, index: Int = 1) -> Entry {
     #expect(DraggedChunk.id("read-aloud-chunk:42") == 42)
     #expect(DraggedChunk.id("some pasted text") == nil)
 }
+
+@Test func droppedAudioGroupsByFolderInChunkOrder() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let reading = root.appendingPathComponent("2026-10-29-citi-bike")
+    let loose = root.appendingPathComponent("Downloads")
+    for folder in [reading, loose] {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+    for name in ["010.mp3", "002.mp3", "001.mp3", "001.txt", "transcript.md"] {
+        FileManager.default.createFile(atPath: reading.appendingPathComponent(name).path, contents: Data())
+    }
+    for name in ["talk.mp3", "notes.pdf"] {
+        FileManager.default.createFile(atPath: loose.appendingPathComponent(name).path, contents: Data())
+    }
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let readings = AudioFiles.readings(from: [
+        reading,
+        loose.appendingPathComponent("talk.mp3"),
+        loose.appendingPathComponent("notes.pdf"),
+    ])
+    #expect(readings.map { $0.paths.map { URL(fileURLWithPath: $0).lastPathComponent } }
+        == [["001.mp3", "002.mp3", "010.mp3"], ["talk.mp3"]])
+    // A library reading takes its title from transcript.md in the engine; a loose file from its name.
+    #expect(readings.map(\.title) == [nil, "talk"])
+    #expect(AudioFiles.readings(from: [loose.appendingPathComponent("notes.pdf")]).isEmpty)
+}

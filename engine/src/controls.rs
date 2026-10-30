@@ -377,12 +377,19 @@ impl Controls {
         Ok(count)
     }
 
-    /// Queues audio files saved by an earlier speak, with the text saved beside
-    /// each one so the lists show what they say. Returns how many were queued.
+    /// Queues audio files, with the text saved beside each one so the lists
+    /// show what they say. A file with no text beside it, like an mp3 from
+    /// elsewhere, shows its file name instead. Returns how many were queued.
     pub fn play_files(&self, paths: Vec<PathBuf>, title: Option<String>) -> usize {
         let texts = paths
             .iter()
-            .map(|p| std::fs::read_to_string(p.with_extension("txt")).unwrap_or_default())
+            .map(|p| {
+                std::fs::read_to_string(p.with_extension("txt"))
+                    .ok()
+                    .filter(|t| !t.trim().is_empty())
+                    .or_else(|| p.file_stem()?.to_str().map(String::from))
+                    .unwrap_or_default()
+            })
             .collect();
         let title = title.unwrap_or_else(|| paths.first().map(|p| reading_title(p)).unwrap_or_default());
 

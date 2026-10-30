@@ -49,6 +49,7 @@ struct MiniPlayerView: View {
                 }
                 Spacer()
                 Menu {
+                    Button("Add Audio…") { model.chooseAudio() }
                     SettingsLink { Text("Settings…") }
                     Button("Restart Engine") { model.restartEngine() }
                     Divider()
@@ -66,5 +67,6 @@ struct MiniPlayerView: View {
         }
         .padding(14)
         .frame(width: 340)
+        .dropDestination(for: URL.self) { urls, _ in model.add(files: urls) }
     }
 }
