@@ -10,7 +10,7 @@ and steer the same queue.
 
 **Build with `./build.sh`, never a bare `cargo build` or `swift build` to
 install.** It builds both, bundles the engine inside `/Applications/Read Aloud.app`, signs both with his Apple Development identity and links
-`~/.local/bin/rust-tts` to the bundled engine. Build output lives in
+`~/.local/bin/rust-tts` to the bundled engine (Contents/Helpers, not MacOS: an engine in MacOS counts as the app to macOS, and opening Read Aloud then only raised the engine). Build output lives in
 `~/.cache` (`engine/.cargo/config.toml` sets the cargo target dir), outside
 anything iCloud syncs. `Cargo.lock` is committed on purpose.
 

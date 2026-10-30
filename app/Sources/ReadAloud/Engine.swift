@@ -81,7 +81,8 @@ struct Engine: Sendable {
     /// counts Read Aloud as responsible for it, so the Accessibility grant
     /// Ctrl+Space needs is the one Read Aloud gets.
     func launch() throws {
-        guard let url = Bundle.main.url(forAuxiliaryExecutable: "rust-tts") else {
+        let url = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/rust-tts")
+        guard FileManager.default.isExecutableFile(atPath: url.path) else {
             throw EngineError.failed("rust-tts is missing from the app bundle. Rebuild with build.sh.")
         }
 
