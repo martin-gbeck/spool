@@ -29,7 +29,7 @@ struct PlayerView: View {
             TranscriptView()
                 .frame(minWidth: 280, idealWidth: 400, maxWidth: .infinity)
         }
-        .navigationTitle(model.current?.title ?? "Read Aloud")
+        .navigationTitle(model.current?.title ?? "Spool")
         // Audio files or reading folders dropped anywhere on the window go to the end of the queue.
         .dropDestination(for: URL.self) { urls, _ in model.add(files: urls) }
         .focusable()
@@ -78,7 +78,7 @@ private struct Banners: View {
             }
         } else if !model.hotkeyAllowed {
             banner(
-                "Ctrl+Space needs Accessibility for Read Aloud. Turn it on, then restart the engine.",
+                "Ctrl+Space needs Accessibility for Spool. Turn it on, then restart the engine.",
                 symbol: "keyboard", tint: .blue
             ) {
                 Button("Open Settings") { model.openAccessibilitySettings() }

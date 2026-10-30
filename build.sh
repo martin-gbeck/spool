@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the engine and the app, and installs /Applications/Read Aloud.app.
+# Builds the engine and the app, and installs /Applications/Spool.app.
 #
 #   ./build.sh                build, install, and start it
 #   ./build.sh --no-open      stop the running copy, install, leave it closed
@@ -13,7 +13,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP="/Applications/Read Aloud.app"
+APP="/Applications/Spool.app"
+# The app was called Read Aloud until 2026-10-30.
+OLD_APP="/Applications/Read Aloud.app"
 SWIFT_SCRATCH="$HOME/.cache/read-aloud-swift"
 CLI_LINK="$HOME/.local/bin/rust-tts"
 
@@ -30,7 +32,7 @@ MODE="${1:-}"
 if [[ "$MODE" != "--keep-running" ]]; then
 echo "==> stopping the running copy"
 # Builds before 2026-10-30 kept the engine in MacOS, later ones in Helpers.
-for old in "$APP/Contents/Helpers/rust-tts" "$APP/Contents/MacOS/rust-tts"; do
+for old in "$APP/Contents/Helpers/rust-tts" "$OLD_APP/Contents/Helpers/rust-tts" "$OLD_APP/Contents/MacOS/rust-tts"; do
     [[ -x "$old" ]] && "$old" quit >/dev/null 2>&1 || true
 done
 # Also the engine from before the app existed, which held the same socket.
@@ -38,8 +40,9 @@ if [[ -f "$CLI_LINK" && ! -L "$CLI_LINK" ]]; then
     "$CLI_LINK" quit >/dev/null 2>&1 || true
 fi
 # A menu bar app ignores AppleScript's quit, so this goes by process.
-pkill -f "Read Aloud.app/Contents/MacOS/ReadAloud" || true
+pkill -f "Contents/MacOS/ReadAloud" || true
 sleep 0.5
+rm -rf "$OLD_APP"
 fi
 
 echo "==> bundle"
@@ -47,7 +50,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/ReadAloud"
 # Not in MacOS: an engine there counts as the app itself to macOS, so with the
-# window closed, opening Read Aloud only brought the engine forward.
+# window closed, opening the app only brought the engine forward.
 cp "$ENGINE" "$APP/Contents/Helpers/rust-tts"
 cp "$ROOT/app/Resources/Info.plist" "$APP/Contents/Info.plist"
 if [[ -f "$ROOT/app/Resources/AppIcon.icns" ]]; then

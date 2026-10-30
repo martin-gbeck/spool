@@ -9,7 +9,7 @@ struct ReadAloudApp: App {
     }
 
     var body: some Scene {
-        Window("Read Aloud", id: "main") {
+        Window("Spool", id: "main") {
             PlayerView()
                 .environment(model)
                 .frame(minWidth: 900, minHeight: 560)

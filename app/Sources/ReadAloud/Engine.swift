@@ -78,8 +78,8 @@ struct Engine: Sendable {
     }()
 
     /// Starts the engine bundled inside this app. Started from here, macOS
-    /// counts Read Aloud as responsible for it, so the Accessibility grant
-    /// Ctrl+Space needs is the one Read Aloud gets.
+    /// counts Spool as responsible for it, so the Accessibility grant
+    /// Ctrl+Space needs is the one Spool gets.
     func launch() throws {
         let url = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/rust-tts")
         guard FileManager.default.isExecutableFile(atPath: url.path) else {

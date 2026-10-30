@@ -32,7 +32,7 @@ use crate::deck::Place;
 use crate::ipc::Command;
 
 const USAGE: &str = "\
-rust tts, the engine behind Read Aloud
+rust tts, the engine behind Spool
 
   rust-tts                       run the engine (hotkey + socket, no window)
   rust-tts speak [text]          speak text, or stdin when no text is given
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Error> {
 
     // Make loop
     let mut event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
-    // No Dock icon of its own: the Read Aloud app is the face, this is the engine.
+    // No Dock icon of its own: the Spool app is the face, this is the engine.
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
 
     let hk_proxy = event_loop.create_proxy();

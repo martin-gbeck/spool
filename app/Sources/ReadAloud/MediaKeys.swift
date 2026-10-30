@@ -1,7 +1,7 @@
 import Foundation
 import MediaPlayer
 
-/// Makes Read Aloud an ordinary source of audio to macOS: the play/pause,
+/// Makes Spool an ordinary source of audio to macOS: the play/pause,
 /// next and previous keys, Control Center's player and AirPods taps all reach
 /// it, and Control Center shows the chunk playing with its progress.
 ///
@@ -62,7 +62,7 @@ final class MediaKeys {
         center.nowPlayingInfo = [
             MPMediaItemPropertyTitle: Format.preview(current.text, limit: 80),
             MPMediaItemPropertyArtist: "\(current.title) · \(current.index) of \(current.of)",
-            MPMediaItemPropertyAlbumTitle: "Read Aloud",
+            MPMediaItemPropertyAlbumTitle: "Spool",
             MPMediaItemPropertyPlaybackDuration: status.duration ?? 0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: status.position,
             MPNowPlayingInfoPropertyPlaybackRate: status.paused ? 0 : status.speed,

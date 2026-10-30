@@ -1,4 +1,4 @@
-# Read Aloud
+# Spool
 
 A SwiftUI app (`app/`) on top of a Rust engine (`engine/`). The engine owns the
 OpenAI connection, the queue, the audio output, Ctrl+Space and a unix socket;
@@ -9,13 +9,13 @@ and steer the same queue.
 ## Local rules
 
 **Build with `./build.sh`, never a bare `cargo build` or `swift build` to
-install.** It builds both, bundles the engine inside `/Applications/Read Aloud.app`, signs both with his Apple Development identity and links
-`~/.local/bin/rust-tts` to the bundled engine (Contents/Helpers, not MacOS: an engine in MacOS counts as the app to macOS, and opening Read Aloud then only raised the engine). Build output lives in
+install.** It builds both, bundles the engine inside `/Applications/Spool.app`, signs both with his Apple Development identity and links
+`~/.local/bin/rust-tts` to the bundled engine (Contents/Helpers, not MacOS: an engine in MacOS counts as the app to macOS, and opening Spool then only raised the engine). Build output lives in
 `~/.cache` (`engine/.cargo/config.toml` sets the cargo target dir), outside
 anything iCloud syncs. `Cargo.lock` is committed on purpose.
 
-**The app starts the engine, so macOS makes Read Aloud responsible for it.**
-That is why the Accessibility grant Ctrl+Space needs is on Read Aloud, and why
+**The app starts the engine, so macOS makes Spool responsible for it.**
+That is why the Accessibility grant Ctrl+Space needs is on Spool, and why
 the signing identity must stay stable: an ad-hoc signature changes every build
 and macOS forgets the grant. `tts.py` opens the app (`open -g -j`) rather than
 the bare binary for the same reason.
@@ -62,7 +62,7 @@ The hotkey needs macOS Accessibility permission; the socket does not, so
 missing permission logs a line and the app runs on without it. **Without that
 permission it must not register the hotkey at all** (2026-10-16): it used to
 claim Ctrl+Space anyway and do nothing, which killed the hotkey of his own
-Desktop `rust_tts` build every time `tts_speak` started this app. Read Aloud
+Desktop `rust_tts` build every time `tts_speak` started this app. Spool
 replaces that Desktop build (`~/Documents/Programming/rust_tts`); the two must
 not run at once or they fight over Ctrl+Space.
 

@@ -159,7 +159,7 @@ struct VolumeControl: View {
             .controlSize(.small)
             .frame(width: 90)
         }
-        .help("Volume of Read Aloud only")
+        .help("Volume of Spool only")
     }
 }
 

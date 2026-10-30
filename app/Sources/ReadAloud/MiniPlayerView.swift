@@ -43,7 +43,7 @@ struct MiniPlayerView: View {
             Divider()
 
             HStack {
-                Button("Open Read Aloud") {
+                Button("Open Spool") {
                     openWindow(id: "main")
                     NSApp.activate()
                 }
