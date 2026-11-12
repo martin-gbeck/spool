@@ -71,3 +71,5 @@ not run at once or they fight over Ctrl+Space.
 **Voice: calm, never dramatic.** Martin, 2026-10-02: the old `coral` voice with a cheerful prompt was unbearable. Default is now `onyx` (his pick) with a patient-teacher prompt: slow, calm, never excited. Never pass an energetic voice or an upbeat `instructions` string.
 
 **Every reading is saved** (2026-10-21, his ask, to stop paying twice for the same audio). `tts.py` makes a folder per speak under `~/Library/Application Support/rust_tts/library/` (outside iCloud, about 1 MB of audio a minute) with `transcript.md`; the app writes `001.mp3` and `001.txt` per chunk into it. `tts_replay` plays a folder again through the `play_files` socket command, from a chunk number or the chunk holding a phrase. Replay before re-sending.
+
+**`integrations/claude/spool_mcp.py` is the MCP server anyone can add to Claude** (2026-11-13): six `spool_*` tools over the socket. Its tests (`test_spool_mcp.py`) run against a fake socket. A change to the socket protocol needs it updated too.

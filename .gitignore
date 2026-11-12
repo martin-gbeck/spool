@@ -3,3 +3,5 @@
 .DS_Store
 /engine/target/
 xcuserdata/
+__pycache__/
+.pytest_cache/
