@@ -28,3 +28,18 @@ engine), `engine/src/config.rs` (key methods). Also the vault client
     `TTS_OPENAI_API_KEY` and the vault `.env` line can go.
   - Done when: with the vault `.env` line removed, a key entered in Settings survives a restart,
     `tts.py speak` reads aloud, and a wrong key shows the rejection in Settings.
+
+## Voice
+
+- [~] **2. Spool reads through Speechify, voice Benjamin, model simba-3.2** (his call, 2026-11-22; branch `speechify`)
+  - Why: Benjamin on Speechify is Q's and M's voice (samples in the vault `output/tech/speechify-voices/`).
+    OpenAI `onyx` stays as a fallback in Settings.
+  - API: `POST https://api.sws.speechify.com/v1/audio/speech`, header `Authorization: Bearer <key>`, JSON
+    `{"input": text, "voice_id": "benjamin", "model": "simba-3.2", "audio_format": "mp3"}`; the reply is JSON
+    whose `audio_data` is the mp3 in base64. Input is chunked to 1800 bytes per request.
+  - Key: `SPEECHIFY_API_KEY` in the vault `.env`, read through the same `api_key_method` and `api_key_file`
+    as the OpenAI key (`speechify_api_key_var_name` in the config).
+  - Config: `engine` ("speechify" default, "openai" fallback), `speechify_voice`, `speechify_model`. Files
+    from before the switch move to Speechify by themselves and keep `voice`/`model` as the OpenAI settings.
+  - Settings: an Engine picker; voice and model follow the engine; the tone prompt shows for OpenAI only.
+  - Done when: Ctrl+Space on text speaks as Benjamin, and Engine = OpenAI in Settings speaks as before.

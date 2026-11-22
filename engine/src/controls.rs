@@ -74,6 +74,8 @@ pub struct QueueView {
 
 #[derive(Debug, Serialize)]
 pub struct SettingsView {
+    pub engine: String,
+    pub engines: Vec<&'static str>,
     pub voice: String,
     pub model: String,
     pub instructions: String,
@@ -87,6 +89,8 @@ pub struct SettingsView {
 /// What a settings change may touch. Anything left out stays as it was.
 #[derive(Debug, Default, serde::Deserialize, Serialize)]
 pub struct SettingsChange {
+    #[serde(default)]
+    pub engine: Option<String>,
     #[serde(default)]
     pub voice: Option<String>,
     #[serde(default)]
@@ -310,12 +314,20 @@ impl Controls {
         }
 
         let config = Arc::new(self.config());
+        let speechify = config.engine != "openai";
+        // A voice the caller names must belong to the engine in use: an old
+        // caller passing "onyx" to Speechify gets the configured voice instead
+        // of a failed request.
+        let voice = voice.filter(|v| speechify != config::VOICES.contains(&v.as_str()));
         let request = tts::SpeechRequest {
-            voice: voice.unwrap_or_else(|| config.voice.clone()),
+            voice: voice.unwrap_or_else(|| {
+                if speechify { config.speechify_voice.clone() } else { config.voice.clone() }
+            }),
             instructions: instructions.unwrap_or_else(|| config.instructions.clone()),
         };
 
-        let chunks: Vec<String> = chunking::chunk_text(text)?.into_iter().map(String::from).collect();
+        let max = if speechify { chunking::SPEECHIFY_MAX } else { chunking::OPENAI_MAX };
+        let chunks: Vec<String> = chunking::chunk_text(text, max)?.into_iter().map(String::from).collect();
         let count = chunks.len();
 
         // Every reading is saved, the hotkey's too, so the queue can come back
@@ -510,19 +522,38 @@ impl Controls {
     }
 
     pub fn change_settings(&self, change: SettingsChange) -> Result<(), Error> {
+        if let Some(engine) = &change.engine {
+            anyhow::ensure!(config::ENGINES.contains(&engine.as_str()), "unknown engine {engine:?}");
+            let config = self.config();
+            let key = if engine == "openai" { &config.resolved_api_key } else { &config.resolved_speechify_key };
+            anyhow::ensure!(!key.is_empty(), "no api key for {engine}");
+        }
+        // Voice and model are the active engine's: the one in this change, else the saved one.
+        let openai = match &change.engine {
+            Some(engine) => engine == "openai",
+            None => self.config().engine == "openai",
+        };
         if let Some(voice) = &change.voice {
-            anyhow::ensure!(config::VOICES.contains(&voice.as_str()), "unknown voice {voice:?}");
+            if openai {
+                anyhow::ensure!(config::VOICES.contains(&voice.as_str()), "unknown voice {voice:?}");
+            } else {
+                anyhow::ensure!(!voice.trim().is_empty(), "empty voice");
+            }
         }
         if let Some(model) = &change.model {
-            anyhow::ensure!(config::MODELS.contains(&model.as_str()), "unknown model {model:?}");
+            let known = if openai { config::MODELS } else { config::SPEECHIFY_MODELS };
+            anyhow::ensure!(known.contains(&model.as_str()), "unknown model {model:?}");
         }
 
         self.update_config(|c| {
+            if let Some(engine) = change.engine {
+                c.engine = engine;
+            }
             if let Some(voice) = change.voice {
-                c.voice = voice;
+                if openai { c.voice = voice } else { c.speechify_voice = voice }
             }
             if let Some(model) = change.model {
-                c.model = model;
+                if openai { c.model = model } else { c.speechify_model = model }
             }
             if let Some(instructions) = change.instructions {
                 c.instructions = instructions;
@@ -538,15 +569,20 @@ impl Controls {
 
     pub fn settings(&self) -> SettingsView {
         let config = self.config();
+        let openai = config.engine == "openai";
+        // voice, model, voices and models are the active engine's, so a client
+        // that knows nothing of engines still shows the right pickers.
         SettingsView {
-            voice: config.voice,
-            model: config.model,
+            engine: config.engine.clone(),
+            engines: config::ENGINES.to_vec(),
+            voice: if openai { config.voice } else { config.speechify_voice },
+            model: if openai { config.model } else { config.speechify_model },
             instructions: config.instructions,
             shortcut: config.shortcut.unwrap_or_else(|| "ctrl+space".into()),
             speed: config.speed,
             volume: config.volume,
-            voices: config::VOICES.to_vec(),
-            models: config::MODELS.to_vec(),
+            voices: if openai { config::VOICES.to_vec() } else { config::SPEECHIFY_VOICES.to_vec() },
+            models: if openai { config::MODELS.to_vec() } else { config::SPEECHIFY_MODELS.to_vec() },
         }
     }
 

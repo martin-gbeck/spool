@@ -9,10 +9,28 @@ pub const VOICES: &[&str] = &[
 ];
 pub const MODELS: &[&str] = &["gpt-4o-mini-tts", "tts-1", "tts-1-hd"];
 
+pub const ENGINES: &[&str] = &["speechify", "openai"];
+/// Speechify's voice ids are many; these are the ones worth picking from.
+pub const SPEECHIFY_VOICES: &[&str] = &[
+    "benjamin", "oliver", "graham", "steve", "dorian", "cleon", "rob", "hugh_32", "wyatt_32",
+    "ron", "alec", "michael", "collin", "phil", "fraser", "lorne", "leonard", "earnest", "hamish",
+];
+pub const SPEECHIFY_MODELS: &[&str] = &["simba-3.2", "simba-3.5"];
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub struct Config {
     api_key_method: ApiKeyMethod,
     api_key_var_name: String,
+    /// "speechify" (default) or "openai". Files from before the switch have no
+    /// engine and so move to Speechify; their OpenAI voice and model stay as the fallback.
+    #[serde(default = "default_engine")]
+    pub engine: String,
+    #[serde(default = "default_speechify_var")]
+    speechify_api_key_var_name: String,
+    #[serde(default = "default_speechify_voice")]
+    pub speechify_voice: String,
+    #[serde(default = "default_speechify_model")]
+    pub speechify_model: String,
     #[serde(default)] // missing in the file -> just ""
     api_key: String,
     #[serde(default)]
@@ -29,6 +47,21 @@ pub struct Config {
     // not part of the file; filled in by load() after parsing
     #[serde(skip)]
     pub resolved_api_key: String,
+    #[serde(skip)]
+    pub resolved_speechify_key: String,
+}
+
+fn default_engine() -> String {
+    "speechify".into()
+}
+fn default_speechify_var() -> String {
+    "SPEECHIFY_API_KEY".into()
+}
+fn default_speechify_voice() -> String {
+    "benjamin".into()
+}
+fn default_speechify_model() -> String {
+    "simba-3.2".into()
 }
 
 fn one() -> f32 {
@@ -48,6 +81,10 @@ impl Default for Config {
         Self {
             api_key_method: ApiKeyMethod::SysVar,
             api_key_var_name: "OPENAI_API_KEY".into(),
+            engine: default_engine(),
+            speechify_api_key_var_name: default_speechify_var(),
+            speechify_voice: default_speechify_voice(),
+            speechify_model: default_speechify_model(),
             api_key: String::new(),
             api_key_file: String::new(),
             voice: "onyx".into(),
@@ -57,6 +94,7 @@ impl Default for Config {
             speed: 1.0,
             volume: 1.0,
             resolved_api_key: String::new(),
+            resolved_speechify_key: String::new(),
         }
     }
 }
@@ -81,18 +119,30 @@ impl Config {
     //   "env_file"   -> the line api_key_var_name=... in the .env file at api_key_file
     "api_key_method": {method},
     "api_key_var_name": {var},
+    // which service reads the text aloud: "speechify" (default) or "openai" (fallback).
+    // Speechify's key is the line speechify_api_key_var_name=... in the same key source.
+    "engine": {engine},
+    "speechify_api_key_var_name": {svar},
+    "speechify_voice": {svoice}, // e.g. {svoices}
+    "speechify_model": {smodel}, // {smodels}
     "api_key": {key},
     "api_key_file": {file},
-    "voice": {voice}, // {voices}
-    "model": {model}, // {models}
+    "voice": {voice}, // openai only: {voices}
+    "model": {model}, // openai only: {models}
     "shortcut": {shortcut}, // e.g. "ctrl+space" (the default), "cmd+shift+s"; restart to apply
-    "instructions": {instructions}, // gpt-4o-mini-tts only: tone prompt
+    "instructions": {instructions}, // openai gpt-4o-mini-tts only: tone prompt
     "speed": {speed}, // playback speed, 0.5 to 3, pitch kept
     "volume": {volume} // 0 to 1
 }}
 "#,
             method = s(method),
             var = s(&self.api_key_var_name),
+            engine = s(&self.engine),
+            svar = s(&self.speechify_api_key_var_name),
+            svoice = s(&self.speechify_voice),
+            svoices = SPEECHIFY_VOICES.join(", "),
+            smodel = s(&self.speechify_model),
+            smodels = SPEECHIFY_MODELS.join(", "),
             key = s(&self.api_key),
             file = s(&self.api_key_file),
             voice = s(&self.voice),
@@ -114,10 +164,10 @@ impl Config {
         Ok(())
     }
 
-    fn resolve_api_key(&self) -> Result<String, Error> {
+    fn resolve_api_key(&self, var_name: &str) -> Result<String, Error> {
         match self.api_key_method {
-            ApiKeyMethod::SysVar => std::env::var(&self.api_key_var_name)
-                .with_context(|| format!("env var {} not set", self.api_key_var_name)),
+            ApiKeyMethod::SysVar => std::env::var(var_name)
+                .with_context(|| format!("env var {var_name} not set")),
             ApiKeyMethod::ConfigVar => {
                 ensure!(!self.api_key.is_empty(), "api_key_method is \"config_var\" but api_key is empty");
                 Ok(self.api_key.clone())
@@ -125,9 +175,9 @@ impl Config {
             ApiKeyMethod::EnvFile => {
                 let raw = fs::read_to_string(&self.api_key_file)
                     .with_context(|| format!("cannot read api_key_file {}", self.api_key_file))?;
-                match env_value(&raw, &self.api_key_var_name) {
+                match env_value(&raw, var_name) {
                     Some(key) => Ok(key),
-                    None => bail!("{} is not in {}", self.api_key_var_name, self.api_key_file),
+                    None => bail!("{} is not in {}", var_name, self.api_key_file),
                 }
             }
         }
@@ -168,7 +218,16 @@ pub fn load() -> Result<Config, Error> {
     let raw = fs::read_to_string(&path)?;
     let mut config =
         parse(&raw).with_context(|| format!("invalid config file at {}", path.display()))?;
-    config.resolved_api_key = config.resolve_api_key()?;
+    // The engine in use must have its key; the other one's key is a bonus, so a
+    // missing OpenAI key never stops Speechify and the other way round.
+    let openai = config.resolve_api_key(&config.api_key_var_name);
+    let speechify = config.resolve_api_key(&config.speechify_api_key_var_name);
+    let active = if config.engine == "openai" { &openai } else { &speechify };
+    if let Err(e) = active {
+        bail!("{e:#}");
+    }
+    config.resolved_api_key = openai.unwrap_or_default();
+    config.resolved_speechify_key = speechify.unwrap_or_default();
 
     Ok(config)
 }
@@ -187,6 +246,19 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(parse(&config.render()).unwrap(), config);
+    }
+
+    #[test]
+    fn old_files_move_to_speechify_and_keep_their_openai_voice() {
+        let raw = r#"{
+            "api_key_method": "sys_var", "api_key_var_name": "X", "voice": "onyx",
+            "model": "tts-1", "shortcut": null,
+        }"#;
+        let config = parse(raw).unwrap();
+        assert_eq!(config.engine, "speechify");
+        assert_eq!(config.speechify_voice, "benjamin");
+        assert_eq!(config.speechify_model, "simba-3.2");
+        assert_eq!(config.voice, "onyx");
     }
 
     #[test]

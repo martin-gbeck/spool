@@ -13,6 +13,13 @@ struct SettingsView: View {
         Form {
             if let settings = model.settings {
                 Section("Voice") {
+                    Picker("Engine", selection: Binding(
+                        get: { settings.engine },
+                        set: { model.change(engine: $0) }
+                    )) {
+                        ForEach(settings.engines, id: \.self) { Text($0 == "speechify" ? "Speechify" : "OpenAI (fallback)").tag($0) }
+                    }
+
                     HStack {
                         Picker("Voice", selection: Binding(
                             get: { settings.voice },
@@ -31,6 +38,8 @@ struct SettingsView: View {
                         ForEach(settings.models, id: \.self) { Text($0).tag($0) }
                     }
 
+                    // Only OpenAI takes a tone prompt; Speechify has no such option.
+                    if settings.engine == "openai" {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Tone prompt")
                         TextEditor(text: $instructions)
@@ -51,6 +60,7 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(settings.model != "gpt-4o-mini-tts")
+                    }
                 }
 
                 Section("Playback") {

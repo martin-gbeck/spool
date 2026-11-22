@@ -163,8 +163,9 @@ final class PlayerModel {
 
     // MARK: Settings
 
-    func change(voice: String? = nil, model: String? = nil, instructions: String? = nil) {
+    func change(engine: String? = nil, voice: String? = nil, model: String? = nil, instructions: String? = nil) {
         var command: [String: Any] = ["cmd": "set_settings"]
+        if let engine { command["engine"] = engine }
         if let voice { command["voice"] = voice }
         if let model { command["model"] = model }
         if let instructions { command["instructions"] = instructions }

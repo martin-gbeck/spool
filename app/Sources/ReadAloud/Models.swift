@@ -65,6 +65,8 @@ struct QueueReply: Decodable {
 }
 
 struct EngineSettings: Decodable, Equatable {
+    var engine: String
+    var engines: [String]
     var voice: String
     var model: String
     var instructions: String
