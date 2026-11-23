@@ -170,7 +170,7 @@ final class PlayerModel {
         if let model { command["model"] = model }
         if let instructions { command["instructions"] = instructions }
         Task {
-            if let reply = try? await engine.send(command, as: SettingsReply.self) {
+            if let reply = try? await self.engine.send(command, as: SettingsReply.self) {
                 settings = reply.settings
             }
         }
