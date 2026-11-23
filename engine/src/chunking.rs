@@ -55,9 +55,11 @@ fn split_to_fit(mut text: &str, max: usize) -> Vec<&str> {
         while !text.is_char_boundary(cut) {
             cut -= 1;
         }
-        if let Some(space) = text[..cut].rfind(char::is_whitespace) {
+        // Cut after the space, by its own width: NBSP and the Japanese
+        // ideographic space are 2 and 3 bytes, so "+ 1" would land mid-char.
+        if let Some((space, ch)) = text[..cut].char_indices().rev().find(|(_, c)| c.is_whitespace()) {
             if space > 0 {
-                cut = space + 1;
+                cut = space + ch.len_utf8();
             }
         }
         parts.push(&text[..cut]);
@@ -76,6 +78,14 @@ mod tests {
     #[test]
     fn no_chunk_is_over_the_limit() {
         let text = "word ".repeat(2000);
+        let chunks = chunk_text(&text, SPEECHIFY_MAX).unwrap();
+        assert!(chunks.iter().all(|c| c.len() <= SPEECHIFY_MAX));
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn multibyte_spaces_do_not_split_mid_char() {
+        let text = "日本語\u{3000}".repeat(400);
         let chunks = chunk_text(&text, SPEECHIFY_MAX).unwrap();
         assert!(chunks.iter().all(|c| c.len() <= SPEECHIFY_MAX));
         assert_eq!(chunks.concat(), text);
